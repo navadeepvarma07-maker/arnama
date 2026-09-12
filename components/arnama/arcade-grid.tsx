@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import {
   Gamepad2,
   MessagesSquare,
@@ -28,6 +29,7 @@ const cartridges = [
     color: 'mint' as const,
     badge: 12,
     tilt: 'left' as const,
+    href: '/chat',
   },
   {
     title: 'PHOTOS',
@@ -75,9 +77,17 @@ export function ArcadeGrid() {
         <h2 className="font-display text-xs text-ink">SELECT A MACHINE</h2>
       </div>
       <div className="grid grid-cols-2 gap-5 sm:grid-cols-3">
-        {cartridges.map((c) => (
-          <Cartridge key={c.title} {...c} />
-        ))}
+        {cartridges.map((c) => {
+          const { href, ...rest } = c as typeof c & { href?: string }
+          const card = <Cartridge key={rest.title} {...rest} />
+          return href ? (
+            <Link key={rest.title} href={href} className="contents">
+              {card}
+            </Link>
+          ) : (
+            card
+          )
+        })}
       </div>
     </section>
   )

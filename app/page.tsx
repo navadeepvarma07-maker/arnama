@@ -1,3 +1,4 @@
+import AuthWidget from '@/components/auth-widget';
 import { PortalHeader } from '@/components/arnama/portal-header'
 import { PlayerCard } from '@/components/arnama/player-card'
 import { FriendsStrip } from '@/components/arnama/friends-strip'
@@ -12,6 +13,7 @@ export default function Page() {
       <div className="grid flex-1 gap-6 lg:grid-cols-[300px_1fr]">
         <aside className="flex flex-col gap-6">
           <PlayerCard />
+          <AuthWidget />
           <FriendsStrip />
         </aside>
 
