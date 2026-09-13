@@ -168,15 +168,23 @@ export default function VaultPage() {
         setThreadLoading(false);
 
         // Mark incoming as read
-        supabase
-          .from('vault_dms')
-          .update({ read_at: new Date().toISOString() })
-          .eq('recipient_id', userId)
-          .eq('sender_id', activeThread.id)
-          .is('read_at', null)
-          .then(({ error }) => {
-            if (error) console.error(error);
-          });
+                // Mark incoming as read
+                supabase
+                .from('vault_dms')
+                .update({ read_at: new Date().toISOString() })
+                .eq('recipient_id', userId)
+                .eq('sender_id', activeThread.id)
+                .is('read_at', null)
+                .select()
+                .then(({ data, error }) => {
+                  if (error) {
+                    console.error('❌ Mark read failed:', error);
+                  } else {
+                    console.log(
+                      `✓ Marked ${data?.length ?? 0} DM(s) as read`
+                    );
+                  }
+                });
 
         // Clear this sender's unread count locally
         setUnreadBySender((prev) => {

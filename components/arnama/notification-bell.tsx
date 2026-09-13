@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Bell } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { useProfile } from '@/lib/use-profile';
 
 type Notif = {
   id: string;
@@ -30,8 +31,40 @@ function timeAgo(iso: string): string {
   });
 }
 
+/** Two-tone chime using Web Audio API */
+function playDing() {
+  try {
+    const AudioCtx =
+      (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    // Resume in case it's suspended (browser autoplay policy)
+    if (ctx.state === 'suspended') ctx.resume();
+
+    const now = ctx.currentTime;
+    [880, 1320].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, now + i * 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.15, now + i * 0.08 + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.08 + 0.3);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + i * 0.08);
+      osc.stop(now + i * 0.08 + 0.35);
+    });
+
+    setTimeout(() => ctx.close(), 700);
+  } catch (err) {
+    console.debug('sound blocked:', err);
+  }
+}
+
 export function NotificationBell() {
   const router = useRouter();
+  const { profile } = useProfile();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Notif[]>([]);
   const [loading, setLoading] = useState(true);
@@ -40,7 +73,50 @@ export function NotificationBell() {
   const [isMobile, setIsMobile] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Detect mobile viewport
+  // Mutable ref so realtime callbacks always see latest settings
+  const settingsRef = useRef({
+    notify_chat: true,
+    notify_tunes: true,
+    notify_photos: true,
+    notify_wishes: true,
+    notify_plans: true,
+    notify_vault: true,
+    notify_arcade: true,
+    sound_enabled: true,
+  });
+
+  // Keep ref in sync (for realtime callbacks)
+  useEffect(() => {
+    if (!profile) return;
+    settingsRef.current = {
+      notify_chat: profile.notify_chat ?? true,
+      notify_tunes: profile.notify_tunes ?? true,
+      notify_photos: profile.notify_photos ?? true,
+      notify_wishes: profile.notify_wishes ?? true,
+      notify_plans: profile.notify_plans ?? true,
+      notify_vault: profile.notify_vault ?? true,
+      notify_arcade: profile.notify_arcade ?? true,
+      sound_enabled: profile.sound_enabled ?? true,
+    };
+  }, [profile]);
+
+  // IMPORTANT: derive settings from profile state directly for the FILTER.
+  // This means the filter recomputes whenever profile changes (re-render).
+  const liveSettings = useMemo(
+    () => ({
+      notify_chat: profile?.notify_chat ?? true,
+      notify_tunes: profile?.notify_tunes ?? true,
+      notify_photos: profile?.notify_photos ?? true,
+      notify_wishes: profile?.notify_wishes ?? true,
+      notify_plans: profile?.notify_plans ?? true,
+      notify_vault: profile?.notify_vault ?? true,
+      notify_arcade: profile?.notify_arcade ?? true,
+      sound_enabled: profile?.sound_enabled ?? true,
+    }),
+    [profile]
+  );
+
+  // Mobile detection
   useEffect(() => {
     function check() {
       setIsMobile(window.innerWidth < 640);
@@ -50,7 +126,7 @@ export function NotificationBell() {
     return () => window.removeEventListener('resize', check);
   }, []);
 
-  // Load initial data
+  // Initial load
   useEffect(() => {
     let cancelled = false;
 
@@ -60,14 +136,14 @@ export function NotificationBell() {
       setUserId(user.id);
       const myEmail = user.email;
 
-      const { data: profile } = await supabase
+      const { data: profileData } = await supabase
         .from('profiles')
         .select('last_seen_notifications_at')
         .eq('id', user.id)
         .single();
 
       const lastSeenAt =
-        profile?.last_seen_notifications_at ?? '1970-01-01T00:00:00Z';
+        profileData?.last_seen_notifications_at ?? '1970-01-01T00:00:00Z';
       setLastSeen(lastSeenAt);
 
       const [msgs, wishes, photos, plans, dms, tunes, waitingGames] =
@@ -127,16 +203,29 @@ export function NotificationBell() {
     return () => { cancelled = true; };
   }, []);
 
-  // Realtime prepend
+  // Realtime
   useEffect(() => {
     if (!userId) return;
     const channels: ReturnType<typeof supabase.channel>[] = [];
 
-    function prepend(n: Notif) {
+    function tryPush(n: Notif): boolean {
+      const s = settingsRef.current;
+      const allowed =
+        (n.kind === 'chat' && s.notify_chat) ||
+        (n.kind === 'wish' && s.notify_wishes) ||
+        (n.kind === 'photo' && s.notify_photos) ||
+        (n.kind === 'plan' && s.notify_plans) ||
+        (n.kind === 'dm' && s.notify_vault) ||
+        (n.kind === 'tune' && s.notify_tunes) ||
+        (n.kind === 'arcade' && s.notify_arcade);
+      if (!allowed) return false;
+
       setItems((prev) => {
         if (prev.some((x) => x.id === n.id)) return prev;
         return [n, ...prev].slice(0, 20);
       });
+      if (s.sound_enabled) playDing();
+      return true;
     }
 
     async function setup() {
@@ -151,48 +240,55 @@ export function NotificationBell() {
         if (m.user_email === myEmail) return;
         const sender = m.user_email.split('@')[0];
         const preview = m.content.length > 40 ? m.content.slice(0, 40) + '…' : m.content;
-        prepend({ id: `chat-${m.id}`, kind: 'chat', text: `${sender}: ${preview}`, href: '/chat', at: m.created_at, color: '#E2F0D9', emoji: '💬' });
+        tryPush({ id: `chat-${m.id}`, kind: 'chat', text: `${sender}: ${preview}`, href: '/chat', at: m.created_at, color: '#E2F0D9', emoji: '💬' });
       });
+
       ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wishes' }, (payload) => {
         const w = payload.new as any;
         if (w.user_email === myEmail) return;
         const sender = w.user_email.split('@')[0];
         const preview = w.content.length > 35 ? w.content.slice(0, 35) + '…' : w.content;
-        prepend({ id: `wish-${w.id}`, kind: 'wish', text: `${sender} dropped a wish: ${preview}`, href: '/wishes', at: w.created_at, color: '#E6E6FA', emoji: '✨' });
+        tryPush({ id: `wish-${w.id}`, kind: 'wish', text: `${sender} dropped a wish: ${preview}`, href: '/wishes', at: w.created_at, color: '#E6E6FA', emoji: '✨' });
       });
+
       ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'photos' }, (payload) => {
         const p = payload.new as any;
         if (p.user_email === myEmail) return;
         const sender = p.user_email.split('@')[0];
         const caption = p.caption ? `: ${p.caption.slice(0, 30)}` : '';
-        prepend({ id: `photo-${p.id}`, kind: 'photo', text: `${sender} posted a photo${caption}`, href: '/photos', at: p.created_at, color: '#FFD1DC', emoji: '📸' });
+        tryPush({ id: `photo-${p.id}`, kind: 'photo', text: `${sender} posted a photo${caption}`, href: '/photos', at: p.created_at, color: '#FFD1DC', emoji: '📸' });
       });
+
       ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'plans' }, (payload) => {
         const p = payload.new as any;
         if (p.user_email === myEmail) return;
         const sender = p.user_email.split('@')[0];
-        prepend({ id: `plan-${p.id}`, kind: 'plan', text: `${sender} planned "${p.title}"`, href: '/plans', at: p.created_at, color: '#FFF5BA', emoji: '📅' });
+        tryPush({ id: `plan-${p.id}`, kind: 'plan', text: `${sender} planned "${p.title}"`, href: '/plans', at: p.created_at, color: '#FFF5BA', emoji: '📅' });
       });
+
       ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vault_dms' }, (payload) => {
         const d = payload.new as any;
         if (d.recipient_id !== user.id) return;
         const sender = d.sender_email.split('@')[0];
         const preview = d.content.length > 40 ? d.content.slice(0, 40) + '…' : d.content;
-        prepend({ id: `dm-${d.id}`, kind: 'dm', text: `${sender} sent you: ${preview}`, href: '/vault', at: d.created_at, color: '#D4F0F0', emoji: '🔒' });
+        tryPush({ id: `dm-${d.id}`, kind: 'dm', text: `${sender} sent you: ${preview}`, href: '/vault', at: d.created_at, color: '#D4F0F0', emoji: '🔒' });
       });
+
       ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tunes' }, (payload) => {
         const t = payload.new as any;
         if (t.user_email === myEmail) return;
         const sender = t.user_email.split('@')[0];
-        prepend({ id: `tune-${t.id}`, kind: 'tune', text: `${sender} added "${t.title}"`, href: '/tunes', at: t.created_at, color: '#E2F0D9', emoji: '🎵' });
+        tryPush({ id: `tune-${t.id}`, kind: 'tune', text: `${sender} added "${t.title}"`, href: '/tunes', at: t.created_at, color: '#E2F0D9', emoji: '🎵' });
       });
+
       ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'arcade_ttt' }, (payload) => {
         const g = payload.new as any;
         if (g.player_x_id === user.id) return;
         if (g.status !== 'waiting') return;
         const sender = g.player_x_email.split('@')[0];
-        prepend({ id: `arcade-${g.id}`, kind: 'arcade', text: `${sender} is waiting for a tic-tac-toe match`, href: '/arcade/tictactoe', at: g.created_at, color: '#E6E6FA', emoji: '🎮' });
+        tryPush({ id: `arcade-${g.id}`, kind: 'arcade', text: `${sender} is waiting for a tic-tac-toe match`, href: '/arcade/tictactoe', at: g.created_at, color: '#E6E6FA', emoji: '🎮' });
       });
+
       ch.subscribe();
       channels.push(ch);
     }
@@ -203,7 +299,19 @@ export function NotificationBell() {
     };
   }, [userId]);
 
-  const unreadCount = items.filter(
+  // Filter using LIVE settings from profile (recomputed on profile change)
+  const visibleItems = items.filter((n) => {
+    if (n.kind === 'chat') return liveSettings.notify_chat;
+    if (n.kind === 'wish') return liveSettings.notify_wishes;
+    if (n.kind === 'photo') return liveSettings.notify_photos;
+    if (n.kind === 'plan') return liveSettings.notify_plans;
+    if (n.kind === 'dm') return liveSettings.notify_vault;
+    if (n.kind === 'tune') return liveSettings.notify_tunes;
+    if (n.kind === 'arcade') return liveSettings.notify_arcade;
+    return true;
+  });
+
+  const unreadCount = visibleItems.filter(
     (i) => new Date(i.at).getTime() > new Date(lastSeen).getTime()
   ).length;
   const hasUnread = unreadCount > 0;
@@ -237,8 +345,6 @@ export function NotificationBell() {
     router.push(href);
   }
 
-  // Mobile: fixed full-width panel anchored to viewport
-  // Desktop: absolute panel anchored to bell
   const panelStyle: React.CSSProperties = isMobile
     ? {
         position: 'fixed',
@@ -305,7 +411,6 @@ export function NotificationBell() {
 
       {open && (
         <div style={panelStyle}>
-          {/* Header */}
           <div
             className="flex items-center justify-between border-b-4 border-black shrink-0"
             style={{ backgroundColor: '#E6E6FA', padding: '10px 14px' }}
@@ -329,7 +434,6 @@ export function NotificationBell() {
             </button>
           </div>
 
-          {/* List */}
           <div style={{ overflowY: 'auto', padding: '8px' }}>
             {loading ? (
               <p
@@ -338,7 +442,7 @@ export function NotificationBell() {
               >
                 loading...
               </p>
-            ) : items.length === 0 ? (
+            ) : visibleItems.length === 0 ? (
               <div style={{ padding: '32px 16px', textAlign: 'center' }}>
                 <p style={{ fontSize: '32px', marginBottom: '8px' }}>🕊️</p>
                 <p className="font-black" style={{ fontSize: '12px', color: '#000' }}>
@@ -348,12 +452,14 @@ export function NotificationBell() {
                   className="font-bold"
                   style={{ fontSize: '10px', color: 'rgba(0,0,0,0.5)', marginTop: '4px' }}
                 >
-                  no activity yet
+                  {items.length > 0
+                    ? 'muted — check settings'
+                    : 'no activity yet'}
                 </p>
               </div>
             ) : (
               <div className="flex flex-col" style={{ gap: '6px' }}>
-                {items.map((n) => {
+                {visibleItems.map((n) => {
                   const isNew = new Date(n.at).getTime() > new Date(lastSeen).getTime();
                   return (
                     <button
