@@ -1,10 +1,15 @@
-import { Bell, Settings } from 'lucide-react'
+import Link from 'next/link'
+import { Settings } from 'lucide-react'
+import { NotificationBell } from './notification-bell'
 
 export function PortalHeader() {
   return (
     <header className="flex items-center justify-between gap-3">
       <div className="flex min-w-0 items-center gap-3">
-        <div className="flex size-11 shrink-0 rotate-3 items-center justify-center rounded-2xl border-4 border-black bg-pink font-display text-lg shadow-brutal-sm sm:size-12" style={{ color: '#000' }}>
+        <div
+          className="flex size-11 shrink-0 rotate-3 items-center justify-center rounded-2xl border-4 border-black bg-pink font-display text-lg shadow-brutal-sm sm:size-12"
+          style={{ color: '#000' }}
+        >
           a
         </div>
         <div className="min-w-0">
@@ -24,23 +29,15 @@ export function PortalHeader() {
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
-        <button
-          type="button"
-          aria-label="Notifications"
-          className="relative flex size-11 items-center justify-center rounded-2xl border-4 border-black bg-lavender shadow-brutal-sm transition-transform hover:-translate-y-0.5 active:translate-y-0.5"
-          style={{ color: '#000' }}
-        >
-          <Bell className="size-5" strokeWidth={2.75} />
-          <span className="absolute -right-1.5 -top-1.5 size-4 rounded-full border-2 border-black bg-pink-deep" />
-        </button>
-        <button
-          type="button"
+        <NotificationBell />
+        <Link
+          href="/settings"
           aria-label="Settings"
-          className="flex size-11 items-center justify-center rounded-2xl border-4 border-black bg-mint shadow-brutal-sm transition-transform hover:-translate-y-0.5 active:translate-y-0.5"
-          style={{ color: '#000' }}
+          className="flex size-11 items-center justify-center rounded-2xl border-4 border-black shadow-brutal-sm transition-transform hover:-translate-y-0.5 active:translate-y-0.5"
+          style={{ backgroundColor: '#E2F0D9', color: '#000' }}
         >
           <Settings className="size-5" strokeWidth={2.75} />
-        </button>
+        </Link>
       </div>
     </header>
   )
