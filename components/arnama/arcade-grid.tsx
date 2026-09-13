@@ -195,12 +195,15 @@ export function ArcadeGrid() {
 
   return (
     <section aria-label="Portal menu">
-      <div className="mb-4 flex items-center gap-2">
+            <div className="mb-4 flex items-center gap-2">
         <span
           className="size-3 animate-blink rounded-full border-2"
           style={{ backgroundColor: '#E5989B', borderColor: '#000' }}
         />
-        <h2 className="font-display text-xs" style={{ color: '#FFFDF5' }}>
+        <h2
+          className="font-display text-xs"
+          style={{ color: 'var(--text-primary)' }}
+        >
           SELECT A MACHINE
         </h2>
       </div>
