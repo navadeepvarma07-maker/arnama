@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { useProfile } from '@/lib/use-profile';
 
 type Message = {
   id: string;
@@ -12,6 +13,9 @@ type Message = {
 };
 
 export default function ChatPage() {
+  const { profile } = useProfile();
+  const timeFormat = profile?.time_format ?? '12h';
+
   const [email, setEmail] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -28,7 +32,6 @@ export default function ChatPage() {
         window.location.href = '/login';
       } else {
         setLoading(false);
-        // mark this user as caught-up on chat
         supabase
           .from('profiles')
           .update({ last_seen_at: new Date().toISOString() })
@@ -155,9 +158,10 @@ export default function ChatPage() {
                 const sender = m.user_email.split('@')[0];
                 const prev = messages[i - 1];
                 const isNewGroup = !prev || prev.user_email !== m.user_email;
-                const time = new Date(m.created_at).toLocaleTimeString([], {
+                const time = new Date(m.created_at).toLocaleTimeString('en-IN', {
                   hour: '2-digit',
                   minute: '2-digit',
+                  hour12: timeFormat !== '24h',
                 });
 
                 return (

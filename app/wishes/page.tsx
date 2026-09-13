@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 
@@ -9,6 +9,13 @@ type Wish = {
   user_email: string;
   content: string;
   created_at: string;
+};
+
+type Profile = {
+  id: string;
+  email: string;
+  display_name: string | null;
+  avatar_color: string;
 };
 
 const CARD_COLORS = ['#FFD1DC', '#E2F0D9', '#E6E6FA', '#FFF5BA', '#D4F0F0'];
@@ -42,10 +49,17 @@ function timeAgo(iso: string): string {
   });
 }
 
+function labelFor(email: string, profiles: Record<string, Profile>): string {
+  const p = profiles[email];
+  if (p?.display_name?.trim()) return p.display_name.trim();
+  return email.split('@')[0];
+}
+
 export default function WishesPage() {
   const [email, setEmail] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [wishes, setWishes] = useState<Wish[]>([]);
+  const [profilesMap, setProfilesMap] = useState<Record<string, Profile>>({});
   const [likeCounts, setLikeCounts] = useState<Record<string, number>>({});
   const [myLikes, setMyLikes] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -75,6 +89,24 @@ export default function WishesPage() {
       }
     });
   }, []);
+
+  // Load all profiles (for name lookup)
+  useEffect(() => {
+    if (!email) return;
+    supabase
+      .from('profiles')
+      .select('id, email, display_name, avatar_color')
+      .then(({ data, error }) => {
+        if (error) console.error(error);
+        else {
+          const map: Record<string, Profile> = {};
+          (data ?? []).forEach((p: any) => {
+            map[p.email] = p as Profile;
+          });
+          setProfilesMap(map);
+        }
+      });
+  }, [email]);
 
   // Load wishes
   useEffect(() => {
@@ -111,7 +143,7 @@ export default function WishesPage() {
       });
   }, [email]);
 
-  // Real-time
+  // Realtime
   useEffect(() => {
     if (!email) return;
     const channel = supabase
@@ -140,7 +172,6 @@ export default function WishesPage() {
         { event: 'INSERT', schema: 'public', table: 'wish_likes' },
         (payload) => {
           const l = payload.new as { wish_id: string; user_email: string };
-          // Skip our own likes — we already optimistically counted them
           if (l.user_email === email) return;
           setLikeCounts((prev) => ({
             ...prev,
@@ -153,7 +184,6 @@ export default function WishesPage() {
         { event: 'DELETE', schema: 'public', table: 'wish_likes' },
         (payload) => {
           const l = payload.old as { wish_id: string; user_email: string };
-          // Skip our own unlikes — we already optimistically decremented
           if (l.user_email === email) return;
           setLikeCounts((prev) => ({
             ...prev,
@@ -203,7 +233,6 @@ export default function WishesPage() {
     if (!email) return;
     const alreadyLiked = myLikes.has(wishId);
     if (alreadyLiked) {
-      // optimistic
       setMyLikes((prev) => {
         const next = new Set(prev);
         next.delete(wishId);
@@ -280,7 +309,7 @@ export default function WishesPage() {
               className="font-bold"
               style={{ fontSize: '10px', color: 'rgba(0,0,0,0.5)' }}
             >
-              {content.length} / 280 · anonymous
+              {content.length} / 280 · signed
             </span>
             <button
               type="submit"
@@ -324,6 +353,11 @@ export default function WishesPage() {
               const liked = myLikes.has(w.id);
               const count = likeCounts[w.id] ?? 0;
               const mine = w.user_email === email;
+              const posterName = labelFor(w.user_email, profilesMap);
+              const posterProfile = profilesMap[w.user_email];
+              const avatarColor = posterProfile?.avatar_color ?? '#FFFDF5';
+              const initials = posterName.slice(0, 2).toUpperCase();
+
               return (
                 <div
                   key={w.id}
@@ -334,6 +368,41 @@ export default function WishesPage() {
                     transform: `rotate(${tilt}deg)`,
                   }}
                 >
+                  {/* Poster row */}
+                  <div
+                    className="flex items-center"
+                    style={{ gap: '8px', marginBottom: '10px' }}
+                  >
+                    <div
+                      className="flex items-center justify-center border-2 border-black font-black shrink-0"
+                      style={{
+                        width: '26px',
+                        height: '26px',
+                        borderRadius: '8px',
+                        backgroundColor: avatarColor,
+                        fontSize: '10px',
+                        color: '#000',
+                      }}
+                    >
+                      {initials}
+                    </div>
+                    <span
+                      className="font-black truncate flex-1"
+                      style={{ fontSize: '12px', color: '#000' }}
+                    >
+                      {mine ? `${posterName} (you)` : posterName}
+                    </span>
+                    <span
+                      className="font-bold uppercase tracking-wider shrink-0"
+                      style={{
+                        fontSize: '9px',
+                        color: 'rgba(0,0,0,0.5)',
+                      }}
+                    >
+                      {timeAgo(w.created_at)}
+                    </span>
+                  </div>
+
                   <p
                     className="font-bold whitespace-pre-wrap break-words"
                     style={{
@@ -347,19 +416,9 @@ export default function WishesPage() {
                   </p>
 
                   <div
-                    className="flex items-center justify-between"
+                    className="flex items-center justify-end"
                     style={{ marginTop: '12px' }}
                   >
-                    <span
-                      className="font-bold uppercase tracking-wider"
-                      style={{
-                        fontSize: '9px',
-                        color: 'rgba(0,0,0,0.5)',
-                      }}
-                    >
-                      {timeAgo(w.created_at)}
-                    </span>
-
                     <button
                       onClick={() => toggleLike(w.id)}
                       className="inline-flex items-center border-2 border-black rounded-full transition hover:-translate-y-0.5 active:translate-y-0.5"

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { useProfile } from '@/lib/use-profile';
 
 type Note = {
   id: string;
@@ -52,14 +53,18 @@ function timeAgo(iso: string): string {
   });
 }
 
-function formatTime(iso: string): string {
+function formatTime(iso: string, timeFormat: string = '12h'): string {
   return new Date(iso).toLocaleTimeString('en-IN', {
     hour: '2-digit',
     minute: '2-digit',
+    hour12: timeFormat !== '24h',
   });
 }
 
 export default function VaultPage() {
+  const { profile } = useProfile();
+  const timeFormat = profile?.time_format ?? '12h';
+
   const [tab, setTab] = useState<'notes' | 'messages'>('notes');
   const [userId, setUserId] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
@@ -168,23 +173,20 @@ export default function VaultPage() {
         setThreadLoading(false);
 
         // Mark incoming as read
-                // Mark incoming as read
-                supabase
-                .from('vault_dms')
-                .update({ read_at: new Date().toISOString() })
-                .eq('recipient_id', userId)
-                .eq('sender_id', activeThread.id)
-                .is('read_at', null)
-                .select()
-                .then(({ data, error }) => {
-                  if (error) {
-                    console.error('❌ Mark read failed:', error);
-                  } else {
-                    console.log(
-                      `✓ Marked ${data?.length ?? 0} DM(s) as read`
-                    );
-                  }
-                });
+        supabase
+          .from('vault_dms')
+          .update({ read_at: new Date().toISOString() })
+          .eq('recipient_id', userId)
+          .eq('sender_id', activeThread.id)
+          .is('read_at', null)
+          .select()
+          .then(({ data, error }) => {
+            if (error) {
+              console.error('❌ Mark read failed:', error);
+            } else {
+              console.log(`✓ Marked ${data?.length ?? 0} DM(s) as read`);
+            }
+          });
 
         // Clear this sender's unread count locally
         setUnreadBySender((prev) => {
@@ -207,7 +209,6 @@ export default function VaultPage() {
           const m = payload.new as DM;
           if (m.sender_id !== userId && m.recipient_id !== userId) return;
 
-          // Increment per-sender unread if this is incoming AND not the active thread
           if (m.recipient_id === userId) {
             if (!activeThread || m.sender_id !== activeThread.id) {
               setUnreadBySender((prev) => ({
@@ -217,7 +218,6 @@ export default function VaultPage() {
             }
           }
 
-          // If part of active thread, append
           if (
             activeThread &&
             ((m.sender_id === userId && m.recipient_id === activeThread.id) ||
@@ -804,7 +804,7 @@ export default function VaultPage() {
                                 textAlign: mine ? 'right' : 'left',
                               }}
                             >
-                              {formatTime(m.created_at)}
+                              {formatTime(m.created_at, timeFormat)}
                             </p>
                           </div>
                         </div>

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-
+import { playPop } from '@/lib/ding';
 const AVATAR_COLORS = [
   '#E6E6FA', '#E2F0D9', '#FFD1DC', '#FFF5BA',
   '#D4F0F0', '#FFCFAF', '#FFB8D1', '#D9C7F0',
@@ -97,6 +97,12 @@ export default function SettingsPage() {
     if (!userId) return;
     const next = { ...settings, ...patch };
     setSettings(next);
+
+    // Play a small pop for feedback — respects sound_enabled
+    if (settings.sound_enabled) {
+      playPop();
+    }
+
     const { error } = await supabase
       .from('profiles')
       .update(patch)

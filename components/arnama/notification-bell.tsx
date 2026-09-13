@@ -1,5 +1,5 @@
 'use client';
-
+import { playDing } from '@/lib/ding';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Bell } from 'lucide-react';
@@ -31,36 +31,6 @@ function timeAgo(iso: string): string {
   });
 }
 
-/** Two-tone chime using Web Audio API */
-function playDing() {
-  try {
-    const AudioCtx =
-      (window as any).AudioContext || (window as any).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    // Resume in case it's suspended (browser autoplay policy)
-    if (ctx.state === 'suspended') ctx.resume();
-
-    const now = ctx.currentTime;
-    [880, 1320].forEach((freq, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0.0001, now + i * 0.08);
-      gain.gain.exponentialRampToValueAtTime(0.15, now + i * 0.08 + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.08 + 0.3);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now + i * 0.08);
-      osc.stop(now + i * 0.08 + 0.35);
-    });
-
-    setTimeout(() => ctx.close(), 700);
-  } catch (err) {
-    console.debug('sound blocked:', err);
-  }
-}
 
 export function NotificationBell() {
   const router = useRouter();

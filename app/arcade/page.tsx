@@ -27,6 +27,16 @@ const GAMES: Game[] = [
     players: '2 players',
   },
   {
+    id: 'rps',
+    title: 'ROCK · PAPER · SCISSORS',
+    subtitle: 'best of 3',
+    emoji: '✌️',
+    color: '#FFF5BA',
+    href: '/arcade/rps',
+    status: 'live',
+    players: '2 players',
+  },
+  {
     id: 'pixelwar',
     title: 'PIXEL WAR',
     subtitle: 'shared canvas',
@@ -43,15 +53,6 @@ const GAMES: Game[] = [
     color: '#E2F0D9',
     status: 'soon',
     players: 'up to 6',
-  },
-  {
-    id: 'rps',
-    title: 'ROCK · PAPER · SCISSORS',
-    subtitle: 'best of 3',
-    emoji: '✌️',
-    color: '#FFF5BA',
-    status: 'soon',
-    players: '2 players',
   },
   {
     id: 'connect4',

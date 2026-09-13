@@ -253,3 +253,48 @@
 .animate-blink {
   animation: blink 3s steps(1) infinite;
 }
+/* ============================================ */
+/* THEME VARIABLES + LIGHT MODE OVERRIDES       */
+/* ============================================ */
+
+:root,
+html[data-theme="dark"] {
+  --bg-app: #1a0b2e;
+  --text-primary: #FFFDF5;
+  --text-secondary: rgba(255, 253, 245, 0.6);
+  --text-tertiary: rgba(255, 253, 245, 0.4);
+  color-scheme: dark;
+}
+
+html[data-theme="light"] {
+  --bg-app: #F5EFE0;
+  --text-primary: #1a0b2e;
+  --text-secondary: rgba(26, 11, 46, 0.6);
+  --text-tertiary: rgba(26, 11, 46, 0.4);
+  color-scheme: light;
+}
+
+body {
+  background-color: var(--bg-app);
+  transition: background-color 0.2s ease;
+}
+
+/* Page wrapper backgrounds (all pages use bg-[#1a0b2e]) */
+html[data-theme="light"] [class*="bg-[#1a0b2e]"] {
+  background-color: var(--bg-app) !important;
+}
+
+/* Any text-white in light mode → dark */
+html[data-theme="light"] [class*="text-white"] {
+  color: var(--text-primary) !important;
+}
+
+/* Muted text (rgba(255,253,245,...)) → dark muted in light mode */
+html[data-theme="light"] [style*="rgba(255,253,245"],
+html[data-theme="light"] [style*="rgba(255, 253, 245"] {
+  color: var(--text-secondary) !important;
+}
+
+h1, h2, h3, p, span, div {
+  transition: color 0.15s ease, background-color 0.2s ease;
+}

@@ -9,6 +9,7 @@ export type Profile = {
   display_name: string | null;
   avatar_color: string;
   accent_color: string;
+  theme: string;
   notify_chat: boolean;
   notify_tunes: boolean;
   notify_photos: boolean;
@@ -54,10 +55,15 @@ export function useProfile() {
     };
   }, []);
 
+  // Realtime — react to profile updates
   useEffect(() => {
     if (!userId) return;
+
+    // Unique suffix so multiple useProfile() instances don't collide
+    const suffix = Math.random().toString(36).slice(2, 8);
+
     const channel = supabase
-      .channel(`profile-self-${userId}`)
+      .channel(`profile-self-${userId}-${suffix}`)
       .on(
         'postgres_changes',
         {
@@ -71,6 +77,7 @@ export function useProfile() {
         }
       )
       .subscribe();
+
     return () => {
       supabase.removeChannel(channel);
     };

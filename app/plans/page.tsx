@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { useProfile } from '@/lib/use-profile';
+import { downloadPlanReminder } from '@/lib/reminders';
 
 type Plan = {
   id: string;
@@ -46,31 +48,25 @@ function formatDayLabel(dateKey: string): string {
   });
 }
 
-function formatTime12(t: string | null): string {
+/** Format 24h "HH:MM" per user preference */
+function formatTime12(t: string | null, timeFormat: string = '12h'): string {
   if (!t) return '';
   const [hStr, mStr] = t.split(':');
   const h = parseInt(hStr, 10);
+  const m = parseInt(mStr, 10);
+
+  if (timeFormat === '24h') {
+    return `${pad(h)}:${pad(m)}`;
+  }
   const ampm = h >= 12 ? 'PM' : 'AM';
   const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${h12}:${mStr} ${ampm}`;
+  return `${h12}:${pad(m)} ${ampm}`;
 }
 
-/** Convert 12-hour hour + minute + AM/PM to 24-hour "HH:MM" string */
 function to24h(hour12: number, minute: number, ampm: 'AM' | 'PM'): string {
   let h = hour12 % 12;
   if (ampm === 'PM') h += 12;
   return `${pad(h)}:${pad(minute)}`;
-}
-
-/** Parse 24-hour "HH:MM" into 12-hour pieces */
-function from24h(t: string | null): { hour: number; minute: number; ampm: 'AM' | 'PM' } {
-  if (!t) return { hour: 9, minute: 0, ampm: 'AM' };
-  const [hStr, mStr] = t.split(':');
-  const h = parseInt(hStr, 10);
-  const m = parseInt(mStr, 10);
-  const ampm: 'AM' | 'PM' = h >= 12 ? 'PM' : 'AM';
-  const h12 = h % 12 === 0 ? 12 : h % 12;
-  return { hour: h12, minute: m, ampm };
 }
 
 const MONTH_NAMES = [
@@ -82,17 +78,18 @@ const HOURS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 const MINUTES = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
 
 export default function PlansPage() {
+  const { profile } = useProfile();
+  const timeFormat = profile?.time_format ?? '12h';
+
   const [email, setEmail] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Calendar month state
   const today = useMemo(() => new Date(), []);
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
 
-  // Modal state
   const [openDate, setOpenDate] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -103,7 +100,6 @@ export default function PlansPage() {
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState('');
 
-  // Auth + mark caught-up
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       const user = data.user;
@@ -125,7 +121,6 @@ export default function PlansPage() {
     });
   }, []);
 
-  // Load plans
   useEffect(() => {
     if (!email) return;
     supabase
@@ -138,7 +133,6 @@ export default function PlansPage() {
       });
   }, [email]);
 
-  // Realtime
   useEffect(() => {
     if (!email) return;
     const channel = supabase
@@ -168,7 +162,6 @@ export default function PlansPage() {
     };
   }, [email]);
 
-  // Build calendar grid
   const grid = useMemo(() => {
     const firstOfMonth = new Date(viewYear, viewMonth, 1);
     const startDay = firstOfMonth.getDay();
@@ -183,7 +176,6 @@ export default function PlansPage() {
     return cells;
   }, [viewYear, viewMonth]);
 
-  // Group plans by date key
   const plansByDate = useMemo(() => {
     const map: Record<string, Plan[]> = {};
     plans.forEach((p) => {
@@ -199,7 +191,6 @@ export default function PlansPage() {
   const todayKey = toDateKey(today);
   const activeDayPlans = openDate ? plansByDate[openDate] ?? [] : [];
 
-  // Group active day's plans by user
   const groupedByUser = useMemo(() => {
     const map: Record<string, Plan[]> = {};
     activeDayPlans.forEach((p) => {
@@ -306,7 +297,6 @@ export default function PlansPage() {
     <div className="min-h-screen bg-[#1a0b2e] p-3 sm:p-6 font-mono flex flex-col">
       <div className="w-full max-w-3xl mx-auto flex flex-col gap-3 sm:gap-4">
 
-        {/* Header */}
         <div className="flex items-center justify-between shrink-0">
           <h1 className="text-lg sm:text-2xl font-black text-white">
             📅 plans
@@ -321,7 +311,6 @@ export default function PlansPage() {
           </Link>
         </div>
 
-        {/* Month nav */}
         <div
           className="border-4 border-black rounded-2xl shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] flex items-center justify-between"
           style={{ backgroundColor: '#FFFDF5', padding: '10px 12px', gap: '8px' }}
@@ -356,7 +345,6 @@ export default function PlansPage() {
           </button>
         </div>
 
-        {/* Calendar grid */}
         <div
           className="border-4 border-black rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]"
           style={{ backgroundColor: '#FFFDF5', padding: '8px' }}
@@ -446,7 +434,7 @@ export default function PlansPage() {
                           lineHeight: 1.2,
                         }}
                       >
-                        {p.event_time ? `${formatTime12(p.event_time).split(' ')[0]} ` : ''}
+                        {p.event_time ? `${formatTime12(p.event_time, timeFormat).split(' ')[0]} ` : ''}
                         {p.title}
                       </span>
                     ))}
@@ -477,7 +465,6 @@ export default function PlansPage() {
         </p>
       </div>
 
-      {/* ============ MODAL ============ */}
       {openDate && (
         <div
           onClick={closeModal}
@@ -507,7 +494,6 @@ export default function PlansPage() {
               position: 'relative',
             }}
           >
-            {/* Modal header */}
             <div className="flex items-start justify-between" style={{ gap: '10px', marginBottom: '14px' }}>
               <div className="min-w-0">
                 <p className="font-black" style={{ fontSize: '16px', color: '#000', lineHeight: 1.2 }}>
@@ -544,7 +530,6 @@ export default function PlansPage() {
               </button>
             </div>
 
-            {/* Existing plans — grouped by user */}
             {groupedByUser.length > 0 && (
               <div className="flex flex-col" style={{ gap: '14px', marginBottom: '16px' }}>
                 {groupedByUser.map((group) => {
@@ -554,11 +539,7 @@ export default function PlansPage() {
                   const prefix = group.email.split('@')[0];
                   return (
                     <div key={group.email}>
-                      {/* User header */}
-                      <div
-                        className="flex items-center"
-                        style={{ gap: '8px', marginBottom: '8px' }}
-                      >
+                      <div className="flex items-center" style={{ gap: '8px', marginBottom: '8px' }}>
                         <div
                           className="flex items-center justify-center border-2 border-black font-black shrink-0"
                           style={{
@@ -572,10 +553,7 @@ export default function PlansPage() {
                         >
                           {initials}
                         </div>
-                        <span
-                          className="font-black truncate"
-                          style={{ fontSize: '12px', color: '#000' }}
-                        >
+                        <span className="font-black truncate" style={{ fontSize: '12px', color: '#000' }}>
                           {mine ? `${prefix} (you)` : prefix}
                         </span>
                         <span
@@ -594,7 +572,6 @@ export default function PlansPage() {
                         </span>
                       </div>
 
-                      {/* That user's plans */}
                       <div className="flex flex-col" style={{ gap: '8px', paddingLeft: '34px' }}>
                         {group.plans.map((p) => (
                           <div
@@ -607,13 +584,10 @@ export default function PlansPage() {
                               boxShadow: '3px 3px 0 0 black',
                             }}
                           >
-                            <div
-                              className="flex items-center"
-                              style={{ gap: '6px', marginBottom: '4px' }}
-                            >
+                            <div className="flex items-center" style={{ gap: '6px', marginBottom: '4px' }}>
                               {p.event_time && (
                                 <span
-                                  className="font-black"
+                                  className="font-black shrink-0"
                                   style={{
                                     fontSize: '10px',
                                     color: '#000',
@@ -624,13 +598,10 @@ export default function PlansPage() {
                                     lineHeight: 1.4,
                                   }}
                                 >
-                                  {formatTime12(p.event_time)}
+                                  {formatTime12(p.event_time, timeFormat)}
                                 </span>
                               )}
-                              <span
-                                className="font-black truncate flex-1"
-                                style={{ fontSize: '13px', color: '#000' }}
-                              >
+                              <span className="font-black truncate flex-1" style={{ fontSize: '13px', color: '#000' }}>
                                 {p.title}
                               </span>
                               {mine && (
@@ -664,6 +635,22 @@ export default function PlansPage() {
                                 {p.description}
                               </p>
                             )}
+
+                            {/* 🔔 Remind me button */}
+                            <button
+                              onClick={() => downloadPlanReminder(p)}
+                              className="inline-flex items-center border-2 border-black bg-[#FFFDF5] text-black font-black rounded-lg hover:-translate-y-0.5 active:translate-y-0.5 transition"
+                              style={{
+                                marginTop: '8px',
+                                padding: '6px 10px',
+                                fontSize: '10px',
+                                gap: '6px',
+                                boxShadow: '2px 2px 0 0 black',
+                              }}
+                              title="Download and add to your phone calendar"
+                            >
+                              🔔 remind me
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -673,7 +660,6 @@ export default function PlansPage() {
               </div>
             )}
 
-            {/* Divider */}
             <div
               style={{
                 height: '3px',
@@ -683,12 +669,8 @@ export default function PlansPage() {
               }}
             />
 
-            {/* Add form */}
             <form onSubmit={handleAdd} className="flex flex-col" style={{ gap: '10px' }}>
-              <p
-                className="font-black uppercase tracking-wider"
-                style={{ fontSize: '10px', color: '#000' }}
-              >
+              <p className="font-black uppercase tracking-wider" style={{ fontSize: '10px', color: '#000' }}>
                 ➕ add your plan
               </p>
 
@@ -714,37 +696,23 @@ export default function PlansPage() {
                 style={{ padding: '10px 14px', fontFamily: 'inherit' }}
               />
 
-              {/* Time toggle */}
-              <label
-                className="flex items-center select-none"
-                style={{ gap: '8px', cursor: 'pointer' }}
-              >
+              <label className="flex items-center select-none" style={{ gap: '8px', cursor: 'pointer' }}>
                 <input
                   type="checkbox"
                   checked={includeTime}
                   onChange={(e) => setIncludeTime(e.target.checked)}
-                  style={{
-                    width: '16px',
-                    height: '16px',
-                    accentColor: '#000',
-                    cursor: 'pointer',
-                  }}
+                  style={{ width: '16px', height: '16px', accentColor: '#000', cursor: 'pointer' }}
                 />
-                <span
-                  className="font-black uppercase tracking-wider"
-                  style={{ fontSize: '10px', color: '#000' }}
-                >
+                <span className="font-black uppercase tracking-wider" style={{ fontSize: '10px', color: '#000' }}>
                   add a time
                 </span>
               </label>
 
-              {/* Custom time picker */}
               {includeTime && (
                 <div
                   className="border-2 border-black rounded-xl flex items-center"
                   style={{ backgroundColor: '#E6E6FA', padding: '10px', gap: '8px' }}
                 >
-                  {/* Hour */}
                   <select
                     value={hour12}
                     onChange={(e) => setHour12(parseInt(e.target.value, 10))}
@@ -753,15 +721,12 @@ export default function PlansPage() {
                     style={{ padding: '8px 6px', fontSize: '16px', flex: 1, appearance: 'none' }}
                   >
                     {HOURS.map((h) => (
-                      <option key={h} value={h}>
-                        {pad(h)}
-                      </option>
+                      <option key={h} value={h}>{pad(h)}</option>
                     ))}
                   </select>
 
                   <span className="font-black" style={{ fontSize: '16px', color: '#000' }}>:</span>
 
-                  {/* Minute */}
                   <select
                     value={minute}
                     onChange={(e) => setMinute(parseInt(e.target.value, 10))}
@@ -770,13 +735,10 @@ export default function PlansPage() {
                     style={{ padding: '8px 6px', fontSize: '16px', flex: 1, appearance: 'none' }}
                   >
                     {MINUTES.map((m) => (
-                      <option key={m} value={m}>
-                        {pad(m)}
-                      </option>
+                      <option key={m} value={m}>{pad(m)}</option>
                     ))}
                   </select>
 
-                  {/* AM/PM toggle */}
                   <div
                     className="border-2 border-black rounded-lg flex overflow-hidden shrink-0"
                     style={{ boxShadow: '2px 2px 0 0 black' }}
