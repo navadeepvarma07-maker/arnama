@@ -14,6 +14,67 @@ function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
+/**
+ * Explicitly register the SW and wait for it to be ready.
+ * Times out after `timeout` ms.
+ */
+async function getOrRegisterSW(timeout = 10000): Promise<ServiceWorkerRegistration> {
+  // If already registered, use that
+  let reg = await navigator.serviceWorker.getRegistration();
+  if (reg && reg.active) {
+    console.log('[push] using existing active SW');
+    return reg;
+  }
+
+  console.log('[push] registering /sw.js explicitly...');
+  reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+  console.log('[push] registration created, waiting for activation...');
+
+  // Wait for activation with timeout
+  return new Promise<ServiceWorkerRegistration>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      // Try anyway with what we have
+      if (reg && reg.active) {
+        resolve(reg);
+      } else {
+        reject(new Error('SW activation timeout'));
+      }
+    }, timeout);
+
+    // If already active, resolve now
+    if (reg.active) {
+      clearTimeout(timer);
+      resolve(reg);
+      return;
+    }
+
+    // Otherwise wait for update
+    reg.addEventListener('updatefound', () => {
+      const installing = reg!.installing;
+      if (!installing) return;
+      installing.addEventListener('statechange', () => {
+        console.log('[push] SW state:', installing.state);
+        if (installing.state === 'activated') {
+          clearTimeout(timer);
+          resolve(reg!);
+        }
+      });
+    });
+
+    // Also poll every 500ms as backup
+    const poll = setInterval(() => {
+      if (reg!.active) {
+        clearInterval(poll);
+        clearTimeout(timer);
+        resolve(reg!);
+      }
+    }, 500);
+
+    // Cleanup
+    setTimeout(() => clearInterval(poll), timeout + 100);
+  });
+}
+
 export function usePush() {
   const [permission, setPermission] =
     useState<NotificationPermission>('default');
@@ -28,8 +89,6 @@ export function usePush() {
     const hasPush = 'PushManager' in window;
     const hasNotif = 'Notification' in window;
 
-    console.log('[push] SW:', hasSW, 'Push:', hasPush, 'Notif:', hasNotif);
-
     if (!hasSW || !hasPush || !hasNotif) {
       setSupported(false);
       setLoading(false);
@@ -37,32 +96,26 @@ export function usePush() {
     }
 
     setPermission(Notification.permission);
-    console.log('[push] permission:', Notification.permission);
 
     let cancelled = false;
 
-    async function checkExisting() {
+    async function check() {
       try {
         const reg = await navigator.serviceWorker.getRegistration();
-        console.log('[push] SW reg:', reg ? 'yes' : 'no');
-        if (!reg) {
-          if (!cancelled) setLoading(false);
-          return;
-        }
-        const sub = await reg.pushManager.getSubscription();
-        console.log('[push] existing sub:', sub ? 'yes' : 'no');
-        if (!cancelled) {
-          setSubscribed(!!sub);
-          setLoading(false);
+        if (reg) {
+          const sub = await reg.pushManager.getSubscription();
+          if (!cancelled) setSubscribed(!!sub);
         }
       } catch (err) {
-        console.debug('[push] check failed:', err);
+        console.debug('[push] init check failed:', err);
+      } finally {
         if (!cancelled) setLoading(false);
       }
     }
 
-    checkExisting();
+    check();
 
+    // Safety timeout
     const timer = setTimeout(() => {
       if (!cancelled) setLoading(false);
     }, 2000);
@@ -76,73 +129,68 @@ export function usePush() {
   async function subscribe() {
     if (!supported) return;
     try {
-      console.log('[push] subscribe() called');
+      console.log('[push] subscribe called');
 
       const perm = await Notification.requestPermission();
-      console.log('[push] permission result:', perm);
       setPermission(perm);
-      if (perm !== 'granted') return;
+      if (perm !== 'granted') {
+        console.log('[push] permission not granted');
+        return;
+      }
 
-      // Wait for SW with a timeout
-      const reg = await Promise.race([
-        navigator.serviceWorker.ready,
-        new Promise<ServiceWorkerRegistration>((_, reject) =>
-          setTimeout(() => reject(new Error('SW timeout')), 8000)
-        ),
-      ]);
+      // Explicitly register/wait for SW
+      const reg = await getOrRegisterSW(12000);
       console.log('[push] SW ready');
 
       const vapidPublic = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
       console.log('[push] VAPID present:', !!vapidPublic);
       if (!vapidPublic) {
-        alert('⚠️ Push not configured. Please try again later.');
+        alert('⚠️ Push not configured.');
         return;
       }
 
-      // If there's already a subscription, unsubscribe first to get a fresh one
+      // Clean any existing subscription
       const existing = await reg.pushManager.getSubscription();
       if (existing) {
-        console.log('[push] unsubscribing existing subscription first');
+        console.log('[push] removing old subscription');
         await existing.unsubscribe();
       }
 
-      console.log('[push] subscribing with VAPID...');
+      console.log('[push] creating subscription...');
       const sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(vapidPublic),
       });
-      console.log('[push] subscribed, endpoint:', sub.endpoint.slice(0, 40) + '...');
+      console.log('[push] ✅ subscription created');
 
       const { data: { user } } = await supabase.auth.getUser();
-      console.log('[push] user:', user?.email);
       if (!user) {
-        alert('⚠️ Not signed in. Please log in again.');
+        alert('⚠️ Not signed in.');
         return;
       }
 
-      const payload = sub.toJSON();
       console.log('[push] saving to profiles...');
       const { data, error } = await supabase
         .from('profiles')
-        .update({ push_subscription: payload })
+        .update({ push_subscription: sub.toJSON() })
         .eq('id', user.id)
         .select();
 
       if (error) {
-        console.error('[push] ❌ save error:', error);
+        console.error('[push] save error:', error);
         alert('⚠️ Save failed: ' + error.message);
         return;
       }
       if (!data || data.length === 0) {
-        console.error('[push] ❌ save affected 0 rows (RLS blocked?)');
-        alert('⚠️ Could not save. Check profile permissions.');
+        console.error('[push] 0 rows updated');
+        alert('⚠️ Could not save. Check permissions.');
         return;
       }
-      console.log('[push] ✅ saved');
 
+      console.log('[push] ✅ saved to Supabase');
       setSubscribed(true);
     } catch (err: any) {
-      console.error('[push] ❌ subscribe failed:', err);
+      console.error('[push] ❌ failed:', err);
       alert('⚠️ ' + (err?.message || 'Unknown error'));
     }
   }
