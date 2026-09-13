@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { ThemeProvider } from '@/lib/use-theme';
 import { Analytics } from '@vercel/analytics/next';
 import type { Metadata, Viewport } from 'next';

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { playPop } from '@/lib/ding';
+import { usePush } from '@/lib/use-push';
 const AVATAR_COLORS = [
   '#E6E6FA', '#E2F0D9', '#FFD1DC', '#FFF5BA',
   '#D4F0F0', '#FFCFAF', '#FFB8D1', '#D9C7F0',
@@ -54,6 +55,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const push = usePush();
 
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data }) => {
@@ -263,6 +265,52 @@ export default function SettingsPage() {
 
         {/* ===== NOTIFICATIONS ===== */}
         <Section emoji="🔔" title="notifications">
+        <RowInline
+            label="push notifications"
+            hint="ping me even when the app is closed"
+          >
+            {!push.supported ? (
+              <span
+                style={{
+                  fontSize: '10px',
+                  fontWeight: 800,
+                  color: 'rgba(0,0,0,0.5)',
+                }}
+              >
+                not supported
+              </span>
+            ) : push.loading ? (
+              <span
+                style={{
+                  fontSize: '10px',
+                  fontWeight: 800,
+                  color: 'rgba(0,0,0,0.5)',
+                }}
+              >
+                ...
+              </span>
+            ) : push.subscribed ? (
+              <button
+                onClick={push.unsubscribe}
+                className="border-2 border-black bg-[#FFF5BA] text-black font-black text-xs rounded-lg hover:-translate-y-0.5 active:translate-y-0.5 transition shrink-0"
+                style={{ padding: '8px 14px', boxShadow: '2px 2px 0 0 black' }}
+              >
+                turn off
+              </button>
+            ) : (
+              <button
+                onClick={push.subscribe}
+                className="border-2 border-black text-black font-black text-xs rounded-lg hover:-translate-y-0.5 active:translate-y-0.5 transition shrink-0"
+                style={{
+                  backgroundColor: settings.accent_color,
+                  padding: '8px 14px',
+                  boxShadow: '2px 2px 0 0 black',
+                }}
+              >
+                enable
+              </button>
+            )}
+          </RowInline>
           <RowInline label="chat messages" hint="when someone types in squad chat">
             <Toggle checked={settings.notify_chat} onToggle={toggle('notify_chat')} accent={accent} />
           </RowInline>

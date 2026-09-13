@@ -93,13 +93,24 @@ export default function TunesPage() {
 
   const currentSource = currentTune ? detectSource(currentTune.url) : null;
 
-  // Auth
+  // Auth + mark tunes as caught-up
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      const e = data.user?.email ?? null;
+      const user = data.user;
+      const e = user?.email ?? null;
       setEmail(e);
-      if (!e) window.location.href = '/login';
-      else setLoading(false);
+      if (!e) {
+        window.location.href = '/login';
+      } else {
+        setLoading(false);
+        supabase
+          .from('profiles')
+          .update({ last_seen_tunes_at: new Date().toISOString() })
+          .eq('id', user!.id)
+          .then(({ error }) => {
+            if (error) console.error('last_seen_tunes update failed:', error);
+          });
+      }
     });
   }, []);
 
@@ -117,26 +128,18 @@ export default function TunesPage() {
   }, [email]);
 
   // Load room
-    // Auth + mark tunes as caught-up
-    useEffect(() => {
-        supabase.auth.getUser().then(({ data }) => {
-          const user = data.user;
-          const e = user?.email ?? null;
-          setEmail(e);
-          if (!e) {
-            window.location.href = '/login';
-          } else {
-            setLoading(false);
-            supabase
-              .from('profiles')
-              .update({ last_seen_tunes_at: new Date().toISOString() })
-              .eq('id', user!.id)
-              .then(({ error }) => {
-                if (error) console.error('last_seen_tunes update failed:', error);
-              });
-          }
-        });
-      }, []);
+  useEffect(() => {
+    if (!email) return;
+    supabase
+      .from('listening_rooms')
+      .select('*')
+      .eq('id', 'main')
+      .single()
+      .then(({ data, error }) => {
+        if (error) console.error(error);
+        else setRoom(data);
+      });
+  }, [email]);
 
   // Realtime room updates
   useEffect(() => {
@@ -249,6 +252,155 @@ export default function TunesPage() {
     return () => clearInterval(i);
   }, [isPlaying, currentSource]);
 
+  // ==========================================
+  // MEDIA SESSION — lock screen controls + art
+  // ==========================================
+  useEffect(() => {
+    if (typeof navigator === 'undefined') return;
+    if (!('mediaSession' in navigator)) return;
+
+    if (!currentTune) {
+      try {
+        navigator.mediaSession.metadata = null;
+        navigator.mediaSession.playbackState = 'none';
+      } catch {}
+      return;
+    }
+
+    const senderName =
+      currentTune.user_email === email
+        ? 'you'
+        : currentTune.user_email.split('@')[0];
+
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: currentTune.title,
+        artist: `added by ${senderName}`,
+        album: 'arnama · shared tunes',
+        artwork: [
+          {
+            src: '/icon.svg',
+            sizes: '192x192',
+            type: 'image/svg+xml',
+          },
+          {
+            src: '/icon.svg',
+            sizes: '512x512',
+            type: 'image/svg+xml',
+          },
+        ],
+      });
+    } catch (err) {
+      console.debug('MediaSession metadata error:', err);
+    }
+
+    if (currentSource === 'youtube') {
+      const handlers: [
+        MediaSessionAction,
+        ((details: any) => void) | null
+      ][] = [
+        [
+          'play',
+          () => {
+            try {
+              playerRef.current?.playVideo();
+            } catch {}
+          },
+        ],
+        [
+          'pause',
+          () => {
+            try {
+              playerRef.current?.pauseVideo();
+            } catch {}
+          },
+        ],
+        [
+          'seekbackward',
+          (details: any) => {
+            try {
+              const t = playerRef.current?.getCurrentTime?.() ?? 0;
+              playerRef.current?.seekTo(
+                Math.max(0, t - (details?.seekOffset ?? 10)),
+                true
+              );
+            } catch {}
+          },
+        ],
+        [
+          'seekforward',
+          (details: any) => {
+            try {
+              const t = playerRef.current?.getCurrentTime?.() ?? 0;
+              const dur = playerRef.current?.getDuration?.() ?? 0;
+              playerRef.current?.seekTo(
+                Math.min(dur, t + (details?.seekOffset ?? 10)),
+                true
+              );
+            } catch {}
+          },
+        ],
+        [
+          'seekto',
+          (details: any) => {
+            try {
+              if (details?.seekTime != null) {
+                playerRef.current?.seekTo(details.seekTime, true);
+              }
+            } catch {}
+          },
+        ],
+      ];
+
+      for (const [action, handler] of handlers) {
+        try {
+          navigator.mediaSession.setActionHandler(action, handler);
+        } catch {}
+      }
+    } else {
+      // Spotify — no JS control, clear actions
+      const actions: MediaSessionAction[] = [
+        'play',
+        'pause',
+        'seekbackward',
+        'seekforward',
+        'seekto',
+      ];
+      for (const action of actions) {
+        try {
+          navigator.mediaSession.setActionHandler(action, null);
+        } catch {}
+      }
+    }
+
+    return () => {
+      if (!('mediaSession' in navigator)) return;
+      const actions: MediaSessionAction[] = [
+        'play',
+        'pause',
+        'seekbackward',
+        'seekforward',
+        'seekto',
+      ];
+      for (const action of actions) {
+        try {
+          navigator.mediaSession.setActionHandler(action, null);
+        } catch {}
+      }
+    };
+  }, [currentTune?.id, currentSource, email]);
+
+  // Keep OS playback state in sync
+  useEffect(() => {
+    if (typeof navigator === 'undefined') return;
+    if (!('mediaSession' in navigator)) return;
+    try {
+      navigator.mediaSession.playbackState = isPlaying
+        ? 'playing'
+        : 'paused';
+    } catch {}
+  }, [isPlaying]);
+
   // Presence
   useEffect(() => {
     if (!email) return;
@@ -301,7 +453,6 @@ export default function TunesPage() {
   function togglePlay() {
     if (!playerRef.current || currentSource !== 'youtube') return;
 
-    // Update the player INSTANTLY — no waiting for the DB
     suppressRef.current = true;
     try {
       if (isPlaying) {
@@ -313,7 +464,6 @@ export default function TunesPage() {
       }
     } catch {}
 
-    // Sync to DB in the background so other tabs update
     updateRoom({ is_playing: !isPlaying });
   }
 
@@ -531,13 +681,20 @@ export default function TunesPage() {
           {!currentTune ? (
             <p
               className="font-bold text-center"
-              style={{ padding: '24px 0', fontSize: '13px', color: 'rgba(0,0,0,0.5)' }}
+              style={{
+                padding: '24px 0',
+                fontSize: '13px',
+                color: 'rgba(0,0,0,0.5)',
+              }}
             >
               nothing playing — pick a tune below 👇
             </p>
           ) : (
             <div className="flex flex-col" style={{ gap: '12px' }}>
-              <div className="min-w-0 flex items-center" style={{ gap: '8px' }}>
+              <div
+                className="min-w-0 flex items-center"
+                style={{ gap: '8px' }}
+              >
                 <span
                   className="shrink-0 font-black border-2 border-black rounded-full"
                   style={{
@@ -669,7 +826,9 @@ export default function TunesPage() {
                           width: '32px',
                           height: '32px',
                           borderRadius: '50%',
-                          backgroundColor: isCurrent ? '#9BC5A8' : '#FFD1DC',
+                          backgroundColor: isCurrent
+                            ? '#9BC5A8'
+                            : '#FFD1DC',
                           fontSize: '12px',
                           color: 'black',
                         }}
