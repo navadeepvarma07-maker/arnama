@@ -28,6 +28,8 @@ export function usePush() {
     const hasPush = 'PushManager' in window;
     const hasNotif = 'Notification' in window;
 
+    console.log('[push] SW:', hasSW, 'Push:', hasPush, 'Notif:', hasNotif);
+
     if (!hasSW || !hasPush || !hasNotif) {
       setSupported(false);
       setLoading(false);
@@ -35,32 +37,32 @@ export function usePush() {
     }
 
     setPermission(Notification.permission);
+    console.log('[push] permission:', Notification.permission);
 
-    // Don't wait for SW.ready — just check current registration
     let cancelled = false;
 
     async function checkExisting() {
       try {
         const reg = await navigator.serviceWorker.getRegistration();
+        console.log('[push] SW reg:', reg ? 'yes' : 'no');
         if (!reg) {
-          // SW not registered yet — that's fine on dev
           if (!cancelled) setLoading(false);
           return;
         }
         const sub = await reg.pushManager.getSubscription();
+        console.log('[push] existing sub:', sub ? 'yes' : 'no');
         if (!cancelled) {
           setSubscribed(!!sub);
           setLoading(false);
         }
       } catch (err) {
-        console.debug('push check failed:', err);
+        console.debug('[push] check failed:', err);
         if (!cancelled) setLoading(false);
       }
     }
 
     checkExisting();
 
-    // Safety timeout — if nothing resolves in 2s, show the button anyway
     const timer = setTimeout(() => {
       if (!cancelled) setLoading(false);
     }, 2000);
@@ -74,56 +76,74 @@ export function usePush() {
   async function subscribe() {
     if (!supported) return;
     try {
+      console.log('[push] subscribe() called');
+
       const perm = await Notification.requestPermission();
+      console.log('[push] permission result:', perm);
       setPermission(perm);
       if (perm !== 'granted') return;
 
-      // Wait for SW to be ready (with timeout)
+      // Wait for SW with a timeout
       const reg = await Promise.race([
         navigator.serviceWorker.ready,
         new Promise<ServiceWorkerRegistration>((_, reject) =>
           setTimeout(() => reject(new Error('SW timeout')), 8000)
         ),
       ]);
+      console.log('[push] SW ready');
 
       const vapidPublic = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+      console.log('[push] VAPID present:', !!vapidPublic);
       if (!vapidPublic) {
-        console.error('VAPID public key missing from env');
-        alert(
-          '⚠️ Push is not configured yet. Please try again in a moment.'
-        );
+        alert('⚠️ Push not configured. Please try again later.');
         return;
       }
 
+      // If there's already a subscription, unsubscribe first to get a fresh one
+      const existing = await reg.pushManager.getSubscription();
+      if (existing) {
+        console.log('[push] unsubscribing existing subscription first');
+        await existing.unsubscribe();
+      }
+
+      console.log('[push] subscribing with VAPID...');
       const sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(vapidPublic),
       });
+      console.log('[push] subscribed, endpoint:', sub.endpoint.slice(0, 40) + '...');
 
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { error } = await supabase
-        .from('profiles')
-        .update({ push_subscription: sub.toJSON() })
-        .eq('id', user.id);
-
-      if (error) {
-        console.error('saving subscription failed:', error);
-        alert('⚠️ Could not save subscription. Try again.');
+      console.log('[push] user:', user?.email);
+      if (!user) {
+        alert('⚠️ Not signed in. Please log in again.');
         return;
       }
 
+      const payload = sub.toJSON();
+      console.log('[push] saving to profiles...');
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({ push_subscription: payload })
+        .eq('id', user.id)
+        .select();
+
+      if (error) {
+        console.error('[push] ❌ save error:', error);
+        alert('⚠️ Save failed: ' + error.message);
+        return;
+      }
+      if (!data || data.length === 0) {
+        console.error('[push] ❌ save affected 0 rows (RLS blocked?)');
+        alert('⚠️ Could not save. Check profile permissions.');
+        return;
+      }
+      console.log('[push] ✅ saved');
+
       setSubscribed(true);
     } catch (err: any) {
-      console.error('push subscribe failed:', err);
-      if (err?.message === 'SW timeout') {
-        alert(
-          '⚠️ Notifications need a moment to set up. Refresh the page and try again.'
-        );
-      } else {
-        alert('⚠️ Could not enable notifications: ' + (err?.message ?? 'unknown'));
-      }
+      console.error('[push] ❌ subscribe failed:', err);
+      alert('⚠️ ' + (err?.message || 'Unknown error'));
     }
   }
 
