@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>offline · arnama</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      min-height: 100vh;
+      background: #1a0b2e;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .card {
+      max-width: 420px;
+      border: 4px solid black;
+      background: #FFFDF5;
+      border-radius: 24px;
+      padding: 32px 24px;
+      box-shadow: 8px 8px 0 0 black;
+      text-align: center;
+    }
+    .emoji {
+      font-size: 56px;
+      margin-bottom: 12px;
+    }
+    h1 {
+      font-size: 24px;
+      font-weight: 900;
+      color: #000;
+      margin-bottom: 8px;
+    }
+    p {
+      font-size: 13px;
+      font-weight: 700;
+      color: rgba(0, 0, 0, 0.6);
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+    button {
+      display: inline-block;
+      padding: 12px 20px;
+      border: 4px solid black;
+      border-radius: 12px;
+      background: #E2F0D9;
+      color: #000;
+      font-weight: 900;
+      font-size: 13px;
+      cursor: pointer;
+      box-shadow: 4px 4px 0 0 rgba(0, 0, 0, 1);
+      font-family: inherit;
+      transition: transform 0.15s ease;
+    }
+    button:hover {
+      transform: translateY(-2px);
+    }
+    button:active {
+      transform: translateY(1px);
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="emoji">🐱</div>
+    <h1>offline</h1>
+    <p>
+      no internet right now<br />
+      but arnama is still here
+    </p>
+    <button onclick="location.href='/'">← try home</button>
+  </div>
+</body>
+</html>
