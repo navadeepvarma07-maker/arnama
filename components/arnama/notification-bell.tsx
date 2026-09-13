@@ -37,7 +37,18 @@ export function NotificationBell() {
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [lastSeen, setLastSeen] = useState<string>('1970-01-01T00:00:00Z');
+  const [isMobile, setIsMobile] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // Detect mobile viewport
+  useEffect(() => {
+    function check() {
+      setIsMobile(window.innerWidth < 640);
+    }
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
 
   // Load initial data
   useEffect(() => {
@@ -49,7 +60,6 @@ export function NotificationBell() {
       setUserId(user.id);
       const myEmail = user.email;
 
-      // Get last seen
       const { data: profile } = await supabase
         .from('profiles')
         .select('last_seen_notifications_at')
@@ -60,163 +70,53 @@ export function NotificationBell() {
         profile?.last_seen_notifications_at ?? '1970-01-01T00:00:00Z';
       setLastSeen(lastSeenAt);
 
-      // Fetch recent items from all sources
       const [msgs, wishes, photos, plans, dms, tunes, waitingGames] =
         await Promise.all([
-          supabase
-            .from('messages')
-            .select('id, user_email, content, created_at')
-            .neq('user_email', myEmail)
-            .order('created_at', { ascending: false })
-            .limit(8),
-          supabase
-            .from('wishes')
-            .select('id, user_email, content, created_at')
-            .neq('user_email', myEmail)
-            .order('created_at', { ascending: false })
-            .limit(5),
-          supabase
-            .from('photos')
-            .select('id, user_email, caption, created_at')
-            .neq('user_email', myEmail)
-            .order('created_at', { ascending: false })
-            .limit(5),
-          supabase
-            .from('plans')
-            .select('id, user_email, title, event_date, created_at')
-            .neq('user_email', myEmail)
-            .order('created_at', { ascending: false })
-            .limit(5),
-          supabase
-            .from('vault_dms')
-            .select('id, sender_email, content, created_at, read_at')
-            .eq('recipient_id', user.id)
-            .order('created_at', { ascending: false })
-            .limit(5),
-          supabase
-            .from('tunes')
-            .select('id, user_email, title, created_at')
-            .neq('user_email', myEmail)
-            .order('created_at', { ascending: false })
-            .limit(5),
-          supabase
-            .from('arcade_ttt')
-            .select('id, player_x_email, created_at')
-            .eq('status', 'waiting')
-            .neq('player_x_id', user.id)
-            .order('created_at', { ascending: false })
-            .limit(3),
+          supabase.from('messages').select('id, user_email, content, created_at').neq('user_email', myEmail).order('created_at', { ascending: false }).limit(8),
+          supabase.from('wishes').select('id, user_email, content, created_at').neq('user_email', myEmail).order('created_at', { ascending: false }).limit(5),
+          supabase.from('photos').select('id, user_email, caption, created_at').neq('user_email', myEmail).order('created_at', { ascending: false }).limit(5),
+          supabase.from('plans').select('id, user_email, title, event_date, created_at').neq('user_email', myEmail).order('created_at', { ascending: false }).limit(5),
+          supabase.from('vault_dms').select('id, sender_email, content, created_at, read_at').eq('recipient_id', user.id).order('created_at', { ascending: false }).limit(5),
+          supabase.from('tunes').select('id, user_email, title, created_at').neq('user_email', myEmail).order('created_at', { ascending: false }).limit(5),
+          supabase.from('arcade_ttt').select('id, player_x_email, created_at').eq('status', 'waiting').neq('player_x_id', user.id).order('created_at', { ascending: false }).limit(3),
         ]);
 
       const notifs: Notif[] = [];
 
       (msgs.data ?? []).forEach((m: any) => {
         const sender = m.user_email.split('@')[0];
-        const preview =
-          m.content.length > 40 ? m.content.slice(0, 40) + '…' : m.content;
-        notifs.push({
-          id: `chat-${m.id}`,
-          kind: 'chat',
-          text: `${sender}: ${preview}`,
-          href: '/chat',
-          at: m.created_at,
-          color: '#E2F0D9',
-          emoji: '💬',
-        });
+        const preview = m.content.length > 40 ? m.content.slice(0, 40) + '…' : m.content;
+        notifs.push({ id: `chat-${m.id}`, kind: 'chat', text: `${sender}: ${preview}`, href: '/chat', at: m.created_at, color: '#E2F0D9', emoji: '💬' });
       });
-
       (wishes.data ?? []).forEach((w: any) => {
         const sender = w.user_email.split('@')[0];
-        const preview =
-          w.content.length > 35 ? w.content.slice(0, 35) + '…' : w.content;
-        notifs.push({
-          id: `wish-${w.id}`,
-          kind: 'wish',
-          text: `${sender} dropped a wish: ${preview}`,
-          href: '/wishes',
-          at: w.created_at,
-          color: '#E6E6FA',
-          emoji: '✨',
-        });
+        const preview = w.content.length > 35 ? w.content.slice(0, 35) + '…' : w.content;
+        notifs.push({ id: `wish-${w.id}`, kind: 'wish', text: `${sender} dropped a wish: ${preview}`, href: '/wishes', at: w.created_at, color: '#E6E6FA', emoji: '✨' });
       });
-
       (photos.data ?? []).forEach((p: any) => {
         const sender = p.user_email.split('@')[0];
-        const caption = p.caption
-          ? p.caption.length > 30
-            ? p.caption.slice(0, 30) + '…'
-            : p.caption
-          : '';
-        notifs.push({
-          id: `photo-${p.id}`,
-          kind: 'photo',
-          text: caption
-            ? `${sender} posted a photo: ${caption}`
-            : `${sender} posted a photo`,
-          href: '/photos',
-          at: p.created_at,
-          color: '#FFD1DC',
-          emoji: '📸',
-        });
+        const caption = p.caption ? (p.caption.length > 30 ? p.caption.slice(0, 30) + '…' : p.caption) : '';
+        notifs.push({ id: `photo-${p.id}`, kind: 'photo', text: caption ? `${sender} posted a photo: ${caption}` : `${sender} posted a photo`, href: '/photos', at: p.created_at, color: '#FFD1DC', emoji: '📸' });
       });
-
       (plans.data ?? []).forEach((p: any) => {
         const sender = p.user_email.split('@')[0];
-        notifs.push({
-          id: `plan-${p.id}`,
-          kind: 'plan',
-          text: `${sender} planned "${p.title}"`,
-          href: '/plans',
-          at: p.created_at,
-          color: '#FFF5BA',
-          emoji: '📅',
-        });
+        notifs.push({ id: `plan-${p.id}`, kind: 'plan', text: `${sender} planned "${p.title}"`, href: '/plans', at: p.created_at, color: '#FFF5BA', emoji: '📅' });
       });
-
       (dms.data ?? []).forEach((d: any) => {
         const sender = d.sender_email.split('@')[0];
-        const preview =
-          d.content.length > 40 ? d.content.slice(0, 40) + '…' : d.content;
-        notifs.push({
-          id: `dm-${d.id}`,
-          kind: 'dm',
-          text: `${sender} sent you: ${preview}`,
-          href: '/vault',
-          at: d.created_at,
-          color: '#D4F0F0',
-          emoji: '🔒',
-        });
+        const preview = d.content.length > 40 ? d.content.slice(0, 40) + '…' : d.content;
+        notifs.push({ id: `dm-${d.id}`, kind: 'dm', text: `${sender} sent you: ${preview}`, href: '/vault', at: d.created_at, color: '#D4F0F0', emoji: '🔒' });
       });
-
       (tunes.data ?? []).forEach((t: any) => {
         const sender = t.user_email.split('@')[0];
-        notifs.push({
-          id: `tune-${t.id}`,
-          kind: 'tune',
-          text: `${sender} added "${t.title}"`,
-          href: '/tunes',
-          at: t.created_at,
-          color: '#E2F0D9',
-          emoji: '🎵',
-        });
+        notifs.push({ id: `tune-${t.id}`, kind: 'tune', text: `${sender} added "${t.title}"`, href: '/tunes', at: t.created_at, color: '#E2F0D9', emoji: '🎵' });
       });
-
       (waitingGames.data ?? []).forEach((g: any) => {
         const sender = g.player_x_email.split('@')[0];
-        notifs.push({
-          id: `arcade-${g.id}`,
-          kind: 'arcade',
-          text: `${sender} is waiting for a tic-tac-toe match`,
-          href: '/arcade/tictactoe',
-          at: g.created_at,
-          color: '#E6E6FA',
-          emoji: '🎮',
-        });
+        notifs.push({ id: `arcade-${g.id}`, kind: 'arcade', text: `${sender} is waiting for a tic-tac-toe match`, href: '/arcade/tictactoe', at: g.created_at, color: '#E6E6FA', emoji: '🎮' });
       });
 
-      notifs.sort(
-        (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()
-      );
+      notifs.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
       if (!cancelled) {
         setItems(notifs.slice(0, 20));
         setLoading(false);
@@ -224,233 +124,93 @@ export function NotificationBell() {
     }
 
     load();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
-  // Realtime — prepend new notifications as they arrive
+  // Realtime prepend
   useEffect(() => {
     if (!userId) return;
-
     const channels: ReturnType<typeof supabase.channel>[] = [];
+
+    function prepend(n: Notif) {
+      setItems((prev) => {
+        if (prev.some((x) => x.id === n.id)) return prev;
+        return [n, ...prev].slice(0, 20);
+      });
+    }
 
     async function setup() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user || !user.email) return;
       const myEmail = user.email;
-
       const suffix = Math.random().toString(36).slice(2, 8);
-
       const ch = supabase.channel(`notifs-${suffix}`);
 
-      ch.on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages' },
-        (payload) => {
-          const m = payload.new as {
-            id: string;
-            user_email: string;
-            content: string;
-            created_at: string;
-          };
-          if (m.user_email === myEmail) return;
-          const sender = m.user_email.split('@')[0];
-          const preview =
-            m.content.length > 40 ? m.content.slice(0, 40) + '…' : m.content;
-          prepend({
-            id: `chat-${m.id}`,
-            kind: 'chat',
-            text: `${sender}: ${preview}`,
-            href: '/chat',
-            at: m.created_at,
-            color: '#E2F0D9',
-            emoji: '💬',
-          });
-        }
-      );
-
-      ch.on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'wishes' },
-        (payload) => {
-          const w = payload.new as {
-            id: string;
-            user_email: string;
-            content: string;
-            created_at: string;
-          };
-          if (w.user_email === myEmail) return;
-          const sender = w.user_email.split('@')[0];
-          const preview =
-            w.content.length > 35 ? w.content.slice(0, 35) + '…' : w.content;
-          prepend({
-            id: `wish-${w.id}`,
-            kind: 'wish',
-            text: `${sender} dropped a wish: ${preview}`,
-            href: '/wishes',
-            at: w.created_at,
-            color: '#E6E6FA',
-            emoji: '✨',
-          });
-        }
-      );
-
-      ch.on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'photos' },
-        (payload) => {
-          const p = payload.new as {
-            id: string;
-            user_email: string;
-            caption: string | null;
-            created_at: string;
-          };
-          if (p.user_email === myEmail) return;
-          const sender = p.user_email.split('@')[0];
-          const caption = p.caption ? `: ${p.caption.slice(0, 30)}` : '';
-          prepend({
-            id: `photo-${p.id}`,
-            kind: 'photo',
-            text: `${sender} posted a photo${caption}`,
-            href: '/photos',
-            at: p.created_at,
-            color: '#FFD1DC',
-            emoji: '📸',
-          });
-        }
-      );
-
-      ch.on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'plans' },
-        (payload) => {
-          const p = payload.new as {
-            id: string;
-            user_email: string;
-            title: string;
-            created_at: string;
-          };
-          if (p.user_email === myEmail) return;
-          const sender = p.user_email.split('@')[0];
-          prepend({
-            id: `plan-${p.id}`,
-            kind: 'plan',
-            text: `${sender} planned "${p.title}"`,
-            href: '/plans',
-            at: p.created_at,
-            color: '#FFF5BA',
-            emoji: '📅',
-          });
-        }
-      );
-
-      ch.on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'vault_dms' },
-        (payload) => {
-          const d = payload.new as {
-            id: string;
-            recipient_id: string;
-            sender_email: string;
-            content: string;
-            created_at: string;
-          };
-          if (d.recipient_id !== user.id) return;
-          const sender = d.sender_email.split('@')[0];
-          const preview =
-            d.content.length > 40 ? d.content.slice(0, 40) + '…' : d.content;
-          prepend({
-            id: `dm-${d.id}`,
-            kind: 'dm',
-            text: `${sender} sent you: ${preview}`,
-            href: '/vault',
-            at: d.created_at,
-            color: '#D4F0F0',
-            emoji: '🔒',
-          });
-        }
-      );
-
-      ch.on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'tunes' },
-        (payload) => {
-          const t = payload.new as {
-            id: string;
-            user_email: string;
-            title: string;
-            created_at: string;
-          };
-          if (t.user_email === myEmail) return;
-          const sender = t.user_email.split('@')[0];
-          prepend({
-            id: `tune-${t.id}`,
-            kind: 'tune',
-            text: `${sender} added "${t.title}"`,
-            href: '/tunes',
-            at: t.created_at,
-            color: '#E2F0D9',
-            emoji: '🎵',
-          });
-        }
-      );
-
-      ch.on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'arcade_ttt' },
-        (payload) => {
-          const g = payload.new as {
-            id: string;
-            player_x_email: string;
-            player_x_id: string;
-            status: string;
-            created_at: string;
-          };
-          if (g.player_x_id === user.id) return;
-          if (g.status !== 'waiting') return;
-          const sender = g.player_x_email.split('@')[0];
-          prepend({
-            id: `arcade-${g.id}`,
-            kind: 'arcade',
-            text: `${sender} is waiting for a tic-tac-toe match`,
-            href: '/arcade/tictactoe',
-            at: g.created_at,
-            color: '#E6E6FA',
-            emoji: '🎮',
-          });
-        }
-      );
-
+      ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
+        const m = payload.new as any;
+        if (m.user_email === myEmail) return;
+        const sender = m.user_email.split('@')[0];
+        const preview = m.content.length > 40 ? m.content.slice(0, 40) + '…' : m.content;
+        prepend({ id: `chat-${m.id}`, kind: 'chat', text: `${sender}: ${preview}`, href: '/chat', at: m.created_at, color: '#E2F0D9', emoji: '💬' });
+      });
+      ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wishes' }, (payload) => {
+        const w = payload.new as any;
+        if (w.user_email === myEmail) return;
+        const sender = w.user_email.split('@')[0];
+        const preview = w.content.length > 35 ? w.content.slice(0, 35) + '…' : w.content;
+        prepend({ id: `wish-${w.id}`, kind: 'wish', text: `${sender} dropped a wish: ${preview}`, href: '/wishes', at: w.created_at, color: '#E6E6FA', emoji: '✨' });
+      });
+      ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'photos' }, (payload) => {
+        const p = payload.new as any;
+        if (p.user_email === myEmail) return;
+        const sender = p.user_email.split('@')[0];
+        const caption = p.caption ? `: ${p.caption.slice(0, 30)}` : '';
+        prepend({ id: `photo-${p.id}`, kind: 'photo', text: `${sender} posted a photo${caption}`, href: '/photos', at: p.created_at, color: '#FFD1DC', emoji: '📸' });
+      });
+      ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'plans' }, (payload) => {
+        const p = payload.new as any;
+        if (p.user_email === myEmail) return;
+        const sender = p.user_email.split('@')[0];
+        prepend({ id: `plan-${p.id}`, kind: 'plan', text: `${sender} planned "${p.title}"`, href: '/plans', at: p.created_at, color: '#FFF5BA', emoji: '📅' });
+      });
+      ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vault_dms' }, (payload) => {
+        const d = payload.new as any;
+        if (d.recipient_id !== user.id) return;
+        const sender = d.sender_email.split('@')[0];
+        const preview = d.content.length > 40 ? d.content.slice(0, 40) + '…' : d.content;
+        prepend({ id: `dm-${d.id}`, kind: 'dm', text: `${sender} sent you: ${preview}`, href: '/vault', at: d.created_at, color: '#D4F0F0', emoji: '🔒' });
+      });
+      ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tunes' }, (payload) => {
+        const t = payload.new as any;
+        if (t.user_email === myEmail) return;
+        const sender = t.user_email.split('@')[0];
+        prepend({ id: `tune-${t.id}`, kind: 'tune', text: `${sender} added "${t.title}"`, href: '/tunes', at: t.created_at, color: '#E2F0D9', emoji: '🎵' });
+      });
+      ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'arcade_ttt' }, (payload) => {
+        const g = payload.new as any;
+        if (g.player_x_id === user.id) return;
+        if (g.status !== 'waiting') return;
+        const sender = g.player_x_email.split('@')[0];
+        prepend({ id: `arcade-${g.id}`, kind: 'arcade', text: `${sender} is waiting for a tic-tac-toe match`, href: '/arcade/tictactoe', at: g.created_at, color: '#E6E6FA', emoji: '🎮' });
+      });
       ch.subscribe();
       channels.push(ch);
     }
 
     setup();
-
     return () => {
       channels.forEach((c) => supabase.removeChannel(c));
     };
   }, [userId]);
-
-  function prepend(n: Notif) {
-    setItems((prev) => {
-      if (prev.some((x) => x.id === n.id)) return prev;
-      return [n, ...prev].slice(0, 20);
-    });
-  }
 
   const unreadCount = items.filter(
     (i) => new Date(i.at).getTime() > new Date(lastSeen).getTime()
   ).length;
   const hasUnread = unreadCount > 0;
 
-  // Mark all as read when opening
   async function handleOpen() {
     const nextOpen = !open;
     setOpen(nextOpen);
-
     if (nextOpen && userId) {
       const now = new Date().toISOString();
       setLastSeen(now);
@@ -461,7 +221,6 @@ export function NotificationBell() {
     }
   }
 
-  // Close on outside click
   useEffect(() => {
     if (!open) return;
     function onClick(e: MouseEvent) {
@@ -477,6 +236,40 @@ export function NotificationBell() {
     setOpen(false);
     router.push(href);
   }
+
+  // Mobile: fixed full-width panel anchored to viewport
+  // Desktop: absolute panel anchored to bell
+  const panelStyle: React.CSSProperties = isMobile
+    ? {
+        position: 'fixed',
+        top: '80px',
+        left: '12px',
+        right: '12px',
+        backgroundColor: '#FFFDF5',
+        border: '4px solid black',
+        borderRadius: '16px',
+        boxShadow: '8px 8px 0 0 black',
+        zIndex: 300,
+        maxHeight: 'calc(100vh - 100px)',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }
+    : {
+        position: 'absolute',
+        top: 'calc(100% + 8px)',
+        right: 0,
+        width: '360px',
+        backgroundColor: '#FFFDF5',
+        border: '4px solid black',
+        borderRadius: '16px',
+        boxShadow: '8px 8px 0 0 black',
+        zIndex: 200,
+        maxHeight: '70vh',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      };
 
   return (
     <div ref={panelRef} style={{ position: 'relative' }}>
@@ -511,24 +304,8 @@ export function NotificationBell() {
       </button>
 
       {open && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + 8px)',
-            right: 0,
-            width: 'min(360px, calc(100vw - 32px))',
-            backgroundColor: '#FFFDF5',
-            border: '4px solid black',
-            borderRadius: '16px',
-            boxShadow: '8px 8px 0 0 black',
-            zIndex: 200,
-            maxHeight: '70vh',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-          }}
-        >
-          {/* Panel header */}
+        <div style={panelStyle}>
+          {/* Header */}
           <div
             className="flex items-center justify-between border-b-4 border-black shrink-0"
             style={{ backgroundColor: '#E6E6FA', padding: '10px 14px' }}
@@ -557,11 +334,7 @@ export function NotificationBell() {
             {loading ? (
               <p
                 className="text-center font-bold"
-                style={{
-                  color: 'rgba(0,0,0,0.4)',
-                  fontSize: '11px',
-                  padding: '24px 0',
-                }}
+                style={{ color: 'rgba(0,0,0,0.4)', fontSize: '11px', padding: '24px 0' }}
               >
                 loading...
               </p>
@@ -573,11 +346,7 @@ export function NotificationBell() {
                 </p>
                 <p
                   className="font-bold"
-                  style={{
-                    fontSize: '10px',
-                    color: 'rgba(0,0,0,0.5)',
-                    marginTop: '4px',
-                  }}
+                  style={{ fontSize: '10px', color: 'rgba(0,0,0,0.5)', marginTop: '4px' }}
                 >
                   no activity yet
                 </p>
@@ -585,8 +354,7 @@ export function NotificationBell() {
             ) : (
               <div className="flex flex-col" style={{ gap: '6px' }}>
                 {items.map((n) => {
-                  const isNew =
-                    new Date(n.at).getTime() > new Date(lastSeen).getTime();
+                  const isNew = new Date(n.at).getTime() > new Date(lastSeen).getTime();
                   return (
                     <button
                       key={n.id}

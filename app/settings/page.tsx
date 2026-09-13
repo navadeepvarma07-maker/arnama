@@ -55,7 +55,6 @@ export default function SettingsPage() {
   const [toast, setToast] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  // Load auth + settings
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data }) => {
       const user = data.user;
@@ -135,8 +134,6 @@ export default function SettingsPage() {
     );
     if (!ok) return;
 
-    // Note: This deletes the profile row. Full auth user deletion requires admin API.
-    // For now, we just sign out. Proper deletion would need a Supabase Edge Function.
     await supabase.from('profiles').delete().eq('id', userId);
     await supabase.auth.signOut();
     alert(
@@ -178,7 +175,7 @@ export default function SettingsPage() {
         <Section emoji="👤" title="profile">
           <Row label="signed in as" hint="you can't change this">
             <p
-              className="font-bold truncate"
+              className="font-bold break-all"
               style={{ fontSize: '12px', color: '#000' }}
             >
               {email}
@@ -186,7 +183,7 @@ export default function SettingsPage() {
           </Row>
 
           <Row label="display name" hint="what friends see">
-            <div className="flex" style={{ gap: '8px' }}>
+            <div className="flex w-full" style={{ gap: '8px' }}>
               <input
                 type="text"
                 value={nameInput}
@@ -194,14 +191,14 @@ export default function SettingsPage() {
                 maxLength={24}
                 placeholder={email?.split('@')[0] ?? 'you'}
                 className="flex-1 min-w-0 border-2 border-black rounded-lg bg-white text-black text-sm focus:outline-none"
-                style={{ padding: '8px 12px' }}
+                style={{ padding: '10px 12px' }}
               />
               <button
                 onClick={saveName}
                 className="border-2 border-black text-black font-black text-xs rounded-lg hover:-translate-y-0.5 active:translate-y-0.5 transition shrink-0"
                 style={{
                   backgroundColor: accent,
-                  padding: '8px 14px',
+                  padding: '10px 16px',
                   boxShadow: '2px 2px 0 0 black',
                 }}
               >
@@ -211,15 +208,15 @@ export default function SettingsPage() {
           </Row>
 
           <Row label="avatar color" hint="your sticker in the crew">
-            <div className="flex flex-wrap" style={{ gap: '8px' }}>
+            <div className="flex flex-wrap w-full" style={{ gap: '8px' }}>
               {AVATAR_COLORS.map((c) => (
                 <button
                   key={c}
                   onClick={() => save({ avatar_color: c })}
-                  className="border-2 border-black rounded-lg hover:-translate-y-0.5 active:translate-y-0.5 transition"
+                  className="border-2 border-black rounded-lg hover:-translate-y-0.5 active:translate-y-0.5 transition shrink-0"
                   style={{
-                    width: '32px',
-                    height: '32px',
+                    width: '36px',
+                    height: '36px',
                     backgroundColor: c,
                     boxShadow:
                       settings.avatar_color === c
@@ -236,15 +233,15 @@ export default function SettingsPage() {
         {/* ===== APPEARANCE ===== */}
         <Section emoji="🎨" title="appearance">
           <Row label="accent color" hint="buttons, highlights everywhere">
-            <div className="flex flex-wrap" style={{ gap: '8px' }}>
+            <div className="flex flex-wrap w-full" style={{ gap: '8px' }}>
               {ACCENT_COLORS.map((c) => (
                 <button
                   key={c}
                   onClick={() => save({ accent_color: c })}
-                  className="border-2 border-black rounded-lg hover:-translate-y-0.5 active:translate-y-0.5 transition"
+                  className="border-2 border-black rounded-lg hover:-translate-y-0.5 active:translate-y-0.5 transition shrink-0"
                   style={{
-                    width: '32px',
-                    height: '32px',
+                    width: '36px',
+                    height: '36px',
                     backgroundColor: c,
                     boxShadow:
                       settings.accent_color === c
@@ -260,36 +257,36 @@ export default function SettingsPage() {
 
         {/* ===== NOTIFICATIONS ===== */}
         <Section emoji="🔔" title="notifications">
-          <Row label="chat messages" hint="when someone types in squad chat">
+          <RowInline label="chat messages" hint="when someone types in squad chat">
             <Toggle checked={settings.notify_chat} onToggle={toggle('notify_chat')} accent={accent} />
-          </Row>
-          <Row label="private DMs" hint="vault messages">
+          </RowInline>
+          <RowInline label="private DMs" hint="vault messages">
             <Toggle checked={settings.notify_vault} onToggle={toggle('notify_vault')} accent={accent} />
-          </Row>
-          <Row label="photos" hint="new photo posts">
+          </RowInline>
+          <RowInline label="photos" hint="new photo posts">
             <Toggle checked={settings.notify_photos} onToggle={toggle('notify_photos')} accent={accent} />
-          </Row>
-          <Row label="tunes" hint="new songs shared">
+          </RowInline>
+          <RowInline label="tunes" hint="new songs shared">
             <Toggle checked={settings.notify_tunes} onToggle={toggle('notify_tunes')} accent={accent} />
-          </Row>
-          <Row label="wishes" hint="anonymous confessions">
+          </RowInline>
+          <RowInline label="wishes" hint="anonymous confessions">
             <Toggle checked={settings.notify_wishes} onToggle={toggle('notify_wishes')} accent={accent} />
-          </Row>
-          <Row label="plans" hint="new events on the calendar">
+          </RowInline>
+          <RowInline label="plans" hint="new events on the calendar">
             <Toggle checked={settings.notify_plans} onToggle={toggle('notify_plans')} accent={accent} />
-          </Row>
-          <Row label="arcade" hint="waiting games">
+          </RowInline>
+          <RowInline label="arcade" hint="waiting games">
             <Toggle checked={settings.notify_arcade} onToggle={toggle('notify_arcade')} accent={accent} />
-          </Row>
+          </RowInline>
         </Section>
 
         {/* ===== PREFERENCES ===== */}
         <Section emoji="🎯" title="preferences">
-          <Row label="notification sound" hint="play a ding on new activity">
+          <RowInline label="notification sound" hint="play a ding on new activity">
             <Toggle checked={settings.sound_enabled} onToggle={toggle('sound_enabled')} accent={accent} />
-          </Row>
+          </RowInline>
 
-          <Row label="time format" hint="how times appear">
+          <RowInline label="time format" hint="how times appear">
             <div
               className="flex border-2 border-black rounded-lg overflow-hidden shrink-0"
               style={{ boxShadow: '2px 2px 0 0 black' }}
@@ -298,7 +295,7 @@ export default function SettingsPage() {
                 onClick={() => save({ time_format: '12h' })}
                 className="font-black transition"
                 style={{
-                  padding: '6px 14px',
+                  padding: '8px 16px',
                   fontSize: '11px',
                   backgroundColor: settings.time_format === '12h' ? accent : '#FFFDF5',
                   color: '#000',
@@ -310,7 +307,7 @@ export default function SettingsPage() {
                 onClick={() => save({ time_format: '24h' })}
                 className="font-black transition"
                 style={{
-                  padding: '6px 14px',
+                  padding: '8px 16px',
                   fontSize: '11px',
                   backgroundColor: settings.time_format === '24h' ? accent : '#FFFDF5',
                   color: '#000',
@@ -320,22 +317,22 @@ export default function SettingsPage() {
                 24H
               </button>
             </div>
-          </Row>
+          </RowInline>
         </Section>
 
         {/* ===== PRIVACY ===== */}
         <Section emoji="🔒" title="privacy">
           <Row label="who can DM you" hint="vault messages">
             <div
-              className="flex border-2 border-black rounded-lg overflow-hidden shrink-0"
+              className="flex w-full border-2 border-black rounded-lg overflow-hidden"
               style={{ boxShadow: '2px 2px 0 0 black' }}
             >
               <button
                 onClick={() => save({ allow_dms: 'everyone' })}
-                className="font-black transition"
+                className="flex-1 font-black transition"
                 style={{
-                  padding: '6px 12px',
-                  fontSize: '10px',
+                  padding: '10px',
+                  fontSize: '11px',
                   backgroundColor: settings.allow_dms === 'everyone' ? accent : '#FFFDF5',
                   color: '#000',
                 }}
@@ -344,10 +341,10 @@ export default function SettingsPage() {
               </button>
               <button
                 onClick={() => save({ allow_dms: 'nobody' })}
-                className="font-black transition"
+                className="flex-1 font-black transition"
                 style={{
-                  padding: '6px 12px',
-                  fontSize: '10px',
+                  padding: '10px',
+                  fontSize: '11px',
                   backgroundColor: settings.allow_dms === 'nobody' ? accent : '#FFFDF5',
                   color: '#000',
                   borderLeft: '2px solid black',
@@ -361,72 +358,71 @@ export default function SettingsPage() {
 
         {/* ===== DANGER ZONE ===== */}
         <Section emoji="⚠️" title="danger zone">
-          <Row label="sign out everywhere" hint="log out from all devices">
+          <RowInline label="sign out everywhere" hint="log out from all devices">
             <button
               onClick={signOutEverywhere}
-              className="border-2 border-black bg-[#FFF5BA] text-black font-black text-xs rounded-lg hover:-translate-y-0.5 active:translate-y-0.5 transition"
-              style={{ padding: '8px 14px', boxShadow: '2px 2px 0 0 black' }}
+              className="border-2 border-black bg-[#FFF5BA] text-black font-black text-xs rounded-lg hover:-translate-y-0.5 active:translate-y-0.5 transition shrink-0"
+              style={{ padding: '10px 14px', boxShadow: '2px 2px 0 0 black' }}
             >
               sign out all
             </button>
-          </Row>
+          </RowInline>
 
-          <Row label="delete account" hint="permanently removes your data">
+          <RowInline label="delete account" hint="permanently removes your data">
             {!confirmDelete ? (
               <button
                 onClick={() => setConfirmDelete(true)}
-                className="border-2 border-black bg-[#FFD1DC] text-black font-black text-xs rounded-lg hover:-translate-y-0.5 active:translate-y-0.5 transition"
-                style={{ padding: '8px 14px', boxShadow: '2px 2px 0 0 black' }}
+                className="border-2 border-black bg-[#FFD1DC] text-black font-black text-xs rounded-lg hover:-translate-y-0.5 active:translate-y-0.5 transition shrink-0"
+                style={{ padding: '10px 14px', boxShadow: '2px 2px 0 0 black' }}
               >
                 delete
               </button>
             ) : (
-              <div className="flex" style={{ gap: '6px' }}>
+              <div className="flex shrink-0" style={{ gap: '6px' }}>
                 <button
                   onClick={deleteAccount}
                   className="border-2 border-black text-white font-black text-xs rounded-lg hover:-translate-y-0.5 active:translate-y-0.5 transition"
                   style={{
                     backgroundColor: '#C2185B',
-                    padding: '8px 14px',
+                    padding: '10px 14px',
                     boxShadow: '2px 2px 0 0 black',
                   }}
                 >
-                  yes, delete
+                  yes
                 </button>
                 <button
                   onClick={() => setConfirmDelete(false)}
                   className="border-2 border-black bg-[#FFFDF5] text-black font-black text-xs rounded-lg hover:-translate-y-0.5 active:translate-y-0.5 transition"
-                  style={{ padding: '8px 14px', boxShadow: '2px 2px 0 0 black' }}
+                  style={{ padding: '10px 14px', boxShadow: '2px 2px 0 0 black' }}
                 >
-                  cancel
+                  no
                 </button>
               </div>
             )}
-          </Row>
+          </RowInline>
         </Section>
 
         {/* ===== ABOUT ===== */}
         <Section emoji="💜" title="about">
-          <Row label="version" hint="">
+          <RowInline label="version" hint="">
             <p className="font-black" style={{ fontSize: '12px', color: '#000' }}>
               arnama v1.0
             </p>
-          </Row>
-          <Row label="built with" hint="">
+          </RowInline>
+          <RowInline label="built with" hint="">
             <p className="font-bold" style={{ fontSize: '11px', color: 'rgba(0,0,0,0.6)' }}>
-              next.js · supabase · love
+              next.js · supabase
             </p>
-          </Row>
-          <Row label="theme" hint="neo-brutalist arcade">
+          </RowInline>
+          <RowInline label="theme" hint="">
             <p className="font-bold" style={{ fontSize: '11px', color: 'rgba(0,0,0,0.6)' }}>
-              🎨 pastel + black borders
+              🎨 neo-brutalist
             </p>
-          </Row>
+          </RowInline>
         </Section>
 
       </div>
 
-      {/* Toast */}
       {toast && (
         <div
           style={{
@@ -482,7 +478,46 @@ function Section({
   );
 }
 
+/** Label on top, control below — works everywhere */
 function Row({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        padding: '14px',
+        borderBottom: '2px solid rgba(0,0,0,0.08)',
+      }}
+    >
+      <p className="font-black" style={{ fontSize: '12px', color: '#000' }}>
+        {label}
+      </p>
+      {hint && (
+        <p
+          className="font-bold"
+          style={{
+            fontSize: '10px',
+            color: 'rgba(0,0,0,0.5)',
+            marginTop: '2px',
+            marginBottom: '10px',
+          }}
+        >
+          {hint}
+        </p>
+      )}
+      <div>{children}</div>
+    </div>
+  );
+}
+
+/** Label left, control right — only for compact items (toggles, small buttons) */
+function RowInline({
   label,
   hint,
   children,
