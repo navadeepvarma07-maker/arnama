@@ -19,7 +19,7 @@ const cartridges = [
   { title: 'CHAT', subtitle: 'The group chaos', icon: MessagesSquare, color: 'mint' as const, tilt: 'left' as const, href: '/chat' },
   { title: 'PHOTOS', subtitle: 'The photo dump', icon: Images, color: 'pink' as const, tilt: 'right' as const, href: '/photos' },
   { title: 'TUNES', subtitle: 'Shared playlists', icon: Music4, color: 'mint' as const, tilt: 'right' as const, href: '/tunes' },
-  { title: 'VAULT', subtitle: 'Secret keeper', icon: Lock, color: 'lavender' as const, tilt: 'left' as const },
+  { title: 'VAULT', subtitle: 'Secret keeper', icon: Lock, color: 'lavender' as const, tilt: 'left' as const, href: '/vault' },
   { title: 'PLANS', subtitle: 'Next hangout', icon: CalendarHeart, color: 'pink' as const, tilt: 'none' as const },
   { title: 'WISHES', subtitle: 'Confession board', icon: Sparkles, color: 'lavender' as const, tilt: 'right' as const, href: '/wishes' },
 ]
