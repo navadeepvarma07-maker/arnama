@@ -28,6 +28,12 @@ export function ActivityTicker() {
         .order('created_at', { ascending: false })
         .limit(5)
 
+      const { data: photos } = await supabase
+        .from('photos')
+        .select('id, user_email, caption, created_at')
+        .order('created_at', { ascending: false })
+        .limit(10)
+
       const messageItems: (ActivityItem & { created_at: string })[] =
         (msgs ?? []).map((m) => {
           const name = m.user_email.split('@')[0]
@@ -37,6 +43,23 @@ export function ActivityTicker() {
             id: `msg-${m.id}`,
             text: `${name}: ${preview}`,
             created_at: m.created_at,
+          }
+        })
+
+      const photoItems: (ActivityItem & { created_at: string })[] =
+        (photos ?? []).map((p) => {
+          const name = p.user_email.split('@')[0]
+          const preview = p.caption
+            ? p.caption.length > 30
+              ? p.caption.slice(0, 30) + '…'
+              : p.caption
+            : ''
+          return {
+            id: `photo-${p.id}`,
+            text: preview
+              ? `${name} posted a photo: ${preview}`
+              : `${name} posted a photo 📸`,
+            created_at: p.created_at,
           }
         })
 
@@ -50,7 +73,7 @@ export function ActivityTicker() {
           }
         })
 
-      const merged = [...messageItems, ...joinItems]
+      const merged = [...messageItems, ...photoItems, ...joinItems]
         .sort(
           (a, b) =>
             new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
@@ -80,6 +103,32 @@ export function ActivityTicker() {
           setItems((prev) => [
             ...prev.slice(-19),
             { id: `msg-${m.id}`, text: `${name}: ${preview}` },
+          ])
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'photos' },
+        (payload) => {
+          const p = payload.new as {
+            id: string
+            user_email: string
+            caption: string | null
+          }
+          const name = p.user_email.split('@')[0]
+          const preview = p.caption
+            ? p.caption.length > 30
+              ? p.caption.slice(0, 30) + '…'
+              : p.caption
+            : ''
+          setItems((prev) => [
+            ...prev.slice(-19),
+            {
+              id: `photo-${p.id}`,
+              text: preview
+                ? `${name} posted a photo: ${preview}`
+                : `${name} posted a photo 📸`,
+            },
           ])
         }
       )

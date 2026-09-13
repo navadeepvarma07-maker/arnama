@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   Gamepad2,
   MessagesSquare,
@@ -15,95 +15,109 @@ import { Cartridge } from './cartridge'
 import { supabase } from '@/lib/supabase'
 
 const cartridges = [
-  {
-    title: 'ARCADE',
-    subtitle: 'Play games together',
-    icon: Gamepad2,
-    color: 'lavender' as const,
-    large: true,
-    tilt: 'none' as const,
-  },
-  {
-    title: 'CHAT',
-    subtitle: 'The group chaos',
-    icon: MessagesSquare,
-    color: 'mint' as const,
-    tilt: 'left' as const,
-    href: '/chat',
-  },
-  {
-    title: 'PHOTOS',
-    subtitle: 'The photo dump',
-    icon: Images,
-    color: 'pink' as const,
-    tilt: 'right' as const,
-  },
-  {
-    title: 'TUNES',
-    subtitle: 'Shared playlists',
-    icon: Music4,
-    color: 'mint' as const,
-    tilt: 'right' as const,
-    href: '/tunes',
-  },
-  {
-    title: 'VAULT',
-    subtitle: 'Secret keeper',
-    icon: Lock,
-    color: 'lavender' as const,
-    tilt: 'left' as const,
-  },
-  {
-    title: 'PLANS',
-    subtitle: 'Next hangout',
-    icon: CalendarHeart,
-    color: 'pink' as const,
-    tilt: 'none' as const,
-  },
-  {
-    title: 'WISHES',
-    subtitle: 'Confession board',
-    icon: Sparkles,
-    color: 'lavender' as const,
-    tilt: 'right' as const,
-  },
+  { title: 'ARCADE', subtitle: 'Play games together', icon: Gamepad2, color: 'lavender' as const, large: true, tilt: 'none' as const },
+  { title: 'CHAT', subtitle: 'The group chaos', icon: MessagesSquare, color: 'mint' as const, tilt: 'left' as const, href: '/chat' },
+  { title: 'PHOTOS', subtitle: 'The photo dump', icon: Images, color: 'pink' as const, tilt: 'right' as const, href: '/photos' },
+  { title: 'TUNES', subtitle: 'Shared playlists', icon: Music4, color: 'mint' as const, tilt: 'right' as const, href: '/tunes' },
+  { title: 'VAULT', subtitle: 'Secret keeper', icon: Lock, color: 'lavender' as const, tilt: 'left' as const },
+  { title: 'PLANS', subtitle: 'Next hangout', icon: CalendarHeart, color: 'pink' as const, tilt: 'none' as const },
+  { title: 'WISHES', subtitle: 'Confession board', icon: Sparkles, color: 'lavender' as const, tilt: 'right' as const },
 ]
 
 export function ArcadeGrid() {
-  const [unread, setUnread] = useState(0)
+  const [unreadChat, setUnreadChat] = useState(0)
+  const [unreadTunes, setUnreadTunes] = useState(0)
+  const [unreadPhotos, setUnreadPhotos] = useState(0)
+
+  const refreshCounts = useCallback(async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user || !user.email) return
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('last_seen_at, last_seen_tunes_at, last_seen_photos_at')
+      .eq('id', user.id)
+      .single()
+
+    const lastSeenChat = profile?.last_seen_at ?? '1970-01-01T00:00:00Z'
+    const lastSeenTunes = profile?.last_seen_tunes_at ?? '1970-01-01T00:00:00Z'
+    const lastSeenPhotos = profile?.last_seen_photos_at ?? '1970-01-01T00:00:00Z'
+
+    const [chatResult, tunesResult, photosResult] = await Promise.all([
+      supabase
+        .from('messages')
+        .select('*', { count: 'exact', head: true })
+        .gt('created_at', lastSeenChat)
+        .neq('user_email', user.email),
+      supabase
+        .from('tunes')
+        .select('*', { count: 'exact', head: true })
+        .gt('created_at', lastSeenTunes)
+        .neq('user_email', user.email),
+      supabase
+        .from('photos')
+        .select('*', { count: 'exact', head: true })
+        .gt('created_at', lastSeenPhotos)
+        .neq('user_email', user.email),
+    ])
+
+    setUnreadChat(chatResult.count ?? 0)
+    setUnreadTunes(tunesResult.count ?? 0)
+    setUnreadPhotos(photosResult.count ?? 0)
+  }, [])
 
   useEffect(() => {
-    let channel: ReturnType<typeof supabase.channel> | null = null
+    let chatChannel: ReturnType<typeof supabase.channel> | null = null
+    let tunesChannel: ReturnType<typeof supabase.channel> | null = null
+    let photosChannel: ReturnType<typeof supabase.channel> | null = null
+    let myEmail: string | null = null
 
     async function init() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user || !user.email) return
+      myEmail = user.email
 
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('last_seen_at')
-        .eq('id', user.id)
-        .single()
+      await refreshCounts()
 
-      const lastSeen = profile?.last_seen_at ?? '1970-01-01T00:00:00Z'
+      const channelSuffix = Math.random().toString(36).slice(2, 8)
 
-      const { count } = await supabase
-        .from('messages')
-        .select('*', { count: 'exact', head: true })
-        .gt('created_at', lastSeen)
-        .neq('user_email', user.email)
-
-      setUnread(count ?? 0)
-
-      channel = supabase
-        .channel('unread-badge-live')
+      chatChannel = supabase
+        .channel(`unread-chat-${channelSuffix}`)
         .on(
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'messages' },
           (payload) => {
             const msg = payload.new as { user_email: string }
-            if (msg.user_email !== user.email) {
-              setUnread((c) => c + 1)
+            if (msg.user_email !== myEmail) {
+              setUnreadChat((c) => c + 1)
+            }
+          }
+        )
+        .subscribe()
+
+      tunesChannel = supabase
+        .channel(`unread-tunes-${channelSuffix}`)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'tunes' },
+          (payload) => {
+            const t = payload.new as { user_email: string }
+            if (t.user_email !== myEmail) {
+              setUnreadTunes((c) => c + 1)
+            }
+          }
+        )
+        .subscribe()
+
+      photosChannel = supabase
+        .channel(`unread-photos-${channelSuffix}`)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'photos' },
+          (payload) => {
+            const p = payload.new as { user_email: string }
+            if (p.user_email !== myEmail) {
+              setUnreadPhotos((c) => c + 1)
             }
           }
         )
@@ -112,10 +126,24 @@ export function ArcadeGrid() {
 
     init()
 
-    return () => {
-      if (channel) supabase.removeChannel(channel)
+    const onFocus = () => {
+      refreshCounts()
     }
-  }, [])
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refreshCounts()
+    }
+
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
+
+    return () => {
+      if (chatChannel) supabase.removeChannel(chatChannel)
+      if (tunesChannel) supabase.removeChannel(tunesChannel)
+      if (photosChannel) supabase.removeChannel(photosChannel)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [refreshCounts])
 
   return (
     <section aria-label="Portal menu">
@@ -126,10 +154,10 @@ export function ArcadeGrid() {
       <div className="grid grid-cols-2 gap-5 sm:grid-cols-3">
         {cartridges.map((c) => {
           const { href, ...rest } = c as typeof c & { href?: string }
-          const badge =
-            rest.title === 'CHAT' && unread > 0
-              ? unread
-              : undefined
+          let badge: number | undefined
+          if (rest.title === 'CHAT' && unreadChat > 0) badge = unreadChat
+          if (rest.title === 'TUNES' && unreadTunes > 0) badge = unreadTunes
+          if (rest.title === 'PHOTOS' && unreadPhotos > 0) badge = unreadPhotos
 
           const card = <Cartridge key={rest.title} {...rest} badge={badge} />
           return href ? (

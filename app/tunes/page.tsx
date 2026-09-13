@@ -117,18 +117,26 @@ export default function TunesPage() {
   }, [email]);
 
   // Load room
-  useEffect(() => {
-    if (!email) return;
-    supabase
-      .from('listening_rooms')
-      .select('*')
-      .eq('id', 'main')
-      .single()
-      .then(({ data, error }) => {
-        if (error) console.error(error);
-        else setRoom(data);
-      });
-  }, [email]);
+    // Auth + mark tunes as caught-up
+    useEffect(() => {
+        supabase.auth.getUser().then(({ data }) => {
+          const user = data.user;
+          const e = user?.email ?? null;
+          setEmail(e);
+          if (!e) {
+            window.location.href = '/login';
+          } else {
+            setLoading(false);
+            supabase
+              .from('profiles')
+              .update({ last_seen_tunes_at: new Date().toISOString() })
+              .eq('id', user!.id)
+              .then(({ error }) => {
+                if (error) console.error('last_seen_tunes update failed:', error);
+              });
+          }
+        });
+      }, []);
 
   // Realtime room updates
   useEffect(() => {
