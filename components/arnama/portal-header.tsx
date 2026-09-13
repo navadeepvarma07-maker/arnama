@@ -2,22 +2,22 @@ import { Bell, Settings } from 'lucide-react'
 
 export function PortalHeader() {
   return (
-    <header className="flex flex-wrap items-center justify-between gap-4">
-      <div className="flex items-center gap-3">
-        <div className="flex size-12 rotate-3 items-center justify-center rounded-2xl border-4 border-ink bg-pink font-display text-lg text-ink shadow-brutal-sm">
+    <header className="flex items-center justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex size-11 shrink-0 rotate-3 items-center justify-center rounded-2xl border-4 border-ink bg-pink font-display text-lg text-ink shadow-brutal-sm sm:size-12">
           a
         </div>
-        <div>
-          <h1 className="font-display text-xl leading-none text-ink sm:text-2xl">
+        <div className="min-w-0">
+          <h1 className="truncate font-display text-lg leading-none text-ink sm:text-2xl">
             arnama
           </h1>
-          <p className="mt-1.5 text-sm font-bold text-ink/60">
+          <p className="mt-1 truncate text-xs font-bold text-ink/60 sm:mt-1.5 sm:text-sm">
             our little corner of the internet
           </p>
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <button
           type="button"
           aria-label="Notifications"

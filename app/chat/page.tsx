@@ -21,10 +21,22 @@ export default function ChatPage() {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      const e = data.user?.email ?? null;
+      const user = data.user;
+      const e = user?.email ?? null;
       setEmail(e);
-      if (!e) window.location.href = '/login';
-      else setLoading(false);
+      if (!e) {
+        window.location.href = '/login';
+      } else {
+        setLoading(false);
+        // mark this user as caught-up on chat
+        supabase
+          .from('profiles')
+          .update({ last_seen_at: new Date().toISOString() })
+          .eq('id', user!.id)
+          .then(({ error }) => {
+            if (error) console.error('last_seen update failed:', error);
+          });
+      }
     });
   }, []);
 

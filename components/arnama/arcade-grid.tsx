@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useEffect, useState } from 'react'
 import {
   Gamepad2,
   MessagesSquare,
@@ -11,6 +12,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { Cartridge } from './cartridge'
+import { supabase } from '@/lib/supabase'
 
 const cartridges = [
   {
@@ -18,7 +20,6 @@ const cartridges = [
     subtitle: 'Play games together',
     icon: Gamepad2,
     color: 'lavender' as const,
-    badge: 3,
     large: true,
     tilt: 'none' as const,
   },
@@ -27,7 +28,6 @@ const cartridges = [
     subtitle: 'The group chaos',
     icon: MessagesSquare,
     color: 'mint' as const,
-    badge: 12,
     tilt: 'left' as const,
     href: '/chat',
   },
@@ -50,7 +50,6 @@ const cartridges = [
     subtitle: 'Secret keeper',
     icon: Lock,
     color: 'lavender' as const,
-    badge: 1,
     tilt: 'left' as const,
   },
   {
@@ -70,6 +69,53 @@ const cartridges = [
 ]
 
 export function ArcadeGrid() {
+  const [unread, setUnread] = useState(0)
+
+  useEffect(() => {
+    let channel: ReturnType<typeof supabase.channel> | null = null
+
+    async function init() {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user || !user.email) return
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('last_seen_at')
+        .eq('id', user.id)
+        .single()
+
+      const lastSeen = profile?.last_seen_at ?? '1970-01-01T00:00:00Z'
+
+      const { count } = await supabase
+        .from('messages')
+        .select('*', { count: 'exact', head: true })
+        .gt('created_at', lastSeen)
+        .neq('user_email', user.email)
+
+      setUnread(count ?? 0)
+
+      channel = supabase
+        .channel('unread-badge-live')
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'messages' },
+          (payload) => {
+            const msg = payload.new as { user_email: string }
+            if (msg.user_email !== user.email) {
+              setUnread((c) => c + 1)
+            }
+          }
+        )
+        .subscribe()
+    }
+
+    init()
+
+    return () => {
+      if (channel) supabase.removeChannel(channel)
+    }
+  }, [])
+
   return (
     <section aria-label="Portal menu">
       <div className="mb-4 flex items-center gap-2">
@@ -79,7 +125,12 @@ export function ArcadeGrid() {
       <div className="grid grid-cols-2 gap-5 sm:grid-cols-3">
         {cartridges.map((c) => {
           const { href, ...rest } = c as typeof c & { href?: string }
-          const card = <Cartridge key={rest.title} {...rest} />
+          const badge =
+            rest.title === 'CHAT' && unread > 0
+              ? unread
+              : undefined
+
+          const card = <Cartridge key={rest.title} {...rest} badge={badge} />
           return href ? (
             <Link key={rest.title} href={href} className="contents">
               {card}
