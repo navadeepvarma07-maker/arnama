@@ -20,7 +20,7 @@ const cartridges = [
   { title: 'PHOTOS', subtitle: 'The photo dump', icon: Images, color: 'pink' as const, tilt: 'right' as const, href: '/photos' },
   { title: 'TUNES', subtitle: 'Shared playlists', icon: Music4, color: 'mint' as const, tilt: 'right' as const, href: '/tunes' },
   { title: 'VAULT', subtitle: 'Secret keeper', icon: Lock, color: 'lavender' as const, tilt: 'left' as const, href: '/vault' },
-  { title: 'PLANS', subtitle: 'Next hangout', icon: CalendarHeart, color: 'pink' as const, tilt: 'none' as const },
+  { title: 'PLANS', subtitle: 'Next hangout', icon: CalendarHeart, color: 'pink' as const, tilt: 'none' as const, href: '/plans' },
   { title: 'WISHES', subtitle: 'Confession board', icon: Sparkles, color: 'lavender' as const, tilt: 'right' as const, href: '/wishes' },
 ]
 
@@ -29,6 +29,8 @@ export function ArcadeGrid() {
   const [unreadTunes, setUnreadTunes] = useState(0)
   const [unreadPhotos, setUnreadPhotos] = useState(0)
   const [unreadWishes, setUnreadWishes] = useState(0)
+  const [unreadVault, setUnreadVault] = useState(0)
+  const [unreadPlans, setUnreadPlans] = useState(0)
 
   const refreshCounts = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser()
@@ -36,7 +38,7 @@ export function ArcadeGrid() {
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('last_seen_at, last_seen_tunes_at, last_seen_photos_at, last_seen_wishes_at')
+      .select('last_seen_at, last_seen_tunes_at, last_seen_photos_at, last_seen_wishes_at, last_seen_plans_at')
       .eq('id', user.id)
       .single()
 
@@ -45,18 +47,23 @@ export function ArcadeGrid() {
     const lastTunes = profile?.last_seen_tunes_at ?? L
     const lastPhotos = profile?.last_seen_photos_at ?? L
     const lastWishes = profile?.last_seen_wishes_at ?? L
+    const lastPlans = profile?.last_seen_plans_at ?? L
 
-    const [chatResult, tunesResult, photosResult, wishesResult] = await Promise.all([
+    const [chatResult, tunesResult, photosResult, wishesResult, vaultResult, plansResult] = await Promise.all([
       supabase.from('messages').select('*', { count: 'exact', head: true }).gt('created_at', lastChat).neq('user_email', user.email),
       supabase.from('tunes').select('*', { count: 'exact', head: true }).gt('created_at', lastTunes).neq('user_email', user.email),
       supabase.from('photos').select('*', { count: 'exact', head: true }).gt('created_at', lastPhotos).neq('user_email', user.email),
       supabase.from('wishes').select('*', { count: 'exact', head: true }).gt('created_at', lastWishes).neq('user_email', user.email),
+      supabase.from('vault_dms').select('*', { count: 'exact', head: true }).eq('recipient_id', user.id).is('read_at', null),
+      supabase.from('plans').select('*', { count: 'exact', head: true }).gt('created_at', lastPlans).neq('user_email', user.email),
     ])
 
     setUnreadChat(chatResult.count ?? 0)
     setUnreadTunes(tunesResult.count ?? 0)
     setUnreadPhotos(photosResult.count ?? 0)
     setUnreadWishes(wishesResult.count ?? 0)
+    setUnreadVault(vaultResult.count ?? 0)
+    setUnreadPlans(plansResult.count ?? 0)
   }, [])
 
   useEffect(() => {
@@ -64,12 +71,16 @@ export function ArcadeGrid() {
     let tunesChannel: ReturnType<typeof supabase.channel> | null = null
     let photosChannel: ReturnType<typeof supabase.channel> | null = null
     let wishesChannel: ReturnType<typeof supabase.channel> | null = null
+    let vaultChannel: ReturnType<typeof supabase.channel> | null = null
+    let plansChannel: ReturnType<typeof supabase.channel> | null = null
     let myEmail: string | null = null
+    let myId: string | null = null
 
     async function init() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user || !user.email) return
       myEmail = user.email
+      myId = user.id
       await refreshCounts()
 
       const suffix = Math.random().toString(36).slice(2, 8)
@@ -97,6 +108,38 @@ export function ArcadeGrid() {
           const w = payload.new as { user_email: string }
           if (w.user_email !== myEmail) setUnreadWishes((c) => c + 1)
         }).subscribe()
+
+      vaultChannel = supabase.channel(`unread-vault-${suffix}`)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'vault_dms' },
+          (payload) => {
+            const m = payload.new as { recipient_id: string }
+            if (m.recipient_id === myId) setUnreadVault((c) => c + 1)
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'vault_dms' },
+          (payload) => {
+            const m = payload.new as { recipient_id: string; read_at: string | null }
+            if (m.recipient_id === myId && m.read_at) {
+              setUnreadVault((c) => Math.max(0, c - 1))
+            }
+          }
+        )
+        .subscribe()
+
+      plansChannel = supabase.channel(`unread-plans-${suffix}`)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'plans' },
+          (payload) => {
+            const p = payload.new as { user_email: string }
+            if (p.user_email !== myEmail) setUnreadPlans((c) => c + 1)
+          }
+        )
+        .subscribe()
     }
 
     init()
@@ -114,6 +157,8 @@ export function ArcadeGrid() {
       if (tunesChannel) supabase.removeChannel(tunesChannel)
       if (photosChannel) supabase.removeChannel(photosChannel)
       if (wishesChannel) supabase.removeChannel(wishesChannel)
+      if (vaultChannel) supabase.removeChannel(vaultChannel)
+      if (plansChannel) supabase.removeChannel(plansChannel)
       window.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onVisibility)
     }
@@ -138,6 +183,8 @@ export function ArcadeGrid() {
           if (rest.title === 'TUNES' && unreadTunes > 0) badge = unreadTunes
           if (rest.title === 'PHOTOS' && unreadPhotos > 0) badge = unreadPhotos
           if (rest.title === 'WISHES' && unreadWishes > 0) badge = unreadWishes
+          if (rest.title === 'VAULT' && unreadVault > 0) badge = unreadVault
+          if (rest.title === 'PLANS' && unreadPlans > 0) badge = unreadPlans
 
           const card = <Cartridge key={rest.title} {...rest} badge={badge} />
           return href ? (

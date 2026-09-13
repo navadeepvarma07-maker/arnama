@@ -80,6 +80,7 @@ export default function VaultPage() {
   const [dmInput, setDmInput] = useState('');
   const [sendingDm, setSendingDm] = useState(false);
   const [threadLoading, setThreadLoading] = useState(false);
+  const [unreadBySender, setUnreadBySender] = useState<Record<string, number>>({});
   const dmBottomRef = useRef<HTMLDivElement>(null);
 
   // Auth + mark caught-up
@@ -118,18 +119,33 @@ export default function VaultPage() {
       });
   }, [userId]);
 
-  // Load profiles for DM list
+  // Load profiles + compute per-sender unread counts
   useEffect(() => {
     if (!userId) return;
-    supabase
-      .from('profiles')
-      .select('id, email')
-      .neq('id', userId)
-      .order('email', { ascending: true })
-      .then(({ data, error }) => {
-        if (error) console.error(error);
-        else setProfiles(data ?? []);
-      });
+    Promise.all([
+      supabase
+        .from('profiles')
+        .select('id, email')
+        .neq('id', userId)
+        .order('email', { ascending: true }),
+      supabase
+        .from('vault_dms')
+        .select('sender_id')
+        .eq('recipient_id', userId)
+        .is('read_at', null),
+    ]).then(([profilesRes, unreadRes]) => {
+      if (profilesRes.error) console.error(profilesRes.error);
+      else setProfiles(profilesRes.data ?? []);
+
+      if (unreadRes.error) console.error(unreadRes.error);
+      else {
+        const counts: Record<string, number> = {};
+        (unreadRes.data ?? []).forEach((row: any) => {
+          counts[row.sender_id] = (counts[row.sender_id] ?? 0) + 1;
+        });
+        setUnreadBySender(counts);
+      }
+    });
   }, [userId]);
 
   // Load DMs for active thread
@@ -161,10 +177,17 @@ export default function VaultPage() {
           .then(({ error }) => {
             if (error) console.error(error);
           });
+
+        // Clear this sender's unread count locally
+        setUnreadBySender((prev) => {
+          const next = { ...prev };
+          delete next[activeThread.id];
+          return next;
+        });
       });
   }, [userId, activeThread]);
 
-  // Realtime DMs (only those involving me)
+  // Realtime DMs (badge + thread)
   useEffect(() => {
     if (!userId) return;
     const channel = supabase
@@ -175,7 +198,18 @@ export default function VaultPage() {
         (payload) => {
           const m = payload.new as DM;
           if (m.sender_id !== userId && m.recipient_id !== userId) return;
-          // If it's part of the active thread, add it
+
+          // Increment per-sender unread if this is incoming AND not the active thread
+          if (m.recipient_id === userId) {
+            if (!activeThread || m.sender_id !== activeThread.id) {
+              setUnreadBySender((prev) => ({
+                ...prev,
+                [m.sender_id]: (prev[m.sender_id] ?? 0) + 1,
+              }));
+            }
+          }
+
+          // If part of active thread, append
           if (
             activeThread &&
             ((m.sender_id === userId && m.recipient_id === activeThread.id) ||
@@ -315,6 +349,8 @@ export default function VaultPage() {
     );
   }
 
+  const totalUnread = Object.values(unreadBySender).reduce((a, b) => a + b, 0);
+
   return (
     <div className="min-h-screen bg-[#1a0b2e] p-4 sm:p-6 font-mono flex flex-col">
       <div className="w-full max-w-2xl mx-auto flex flex-col gap-4">
@@ -352,16 +388,33 @@ export default function VaultPage() {
           </button>
           <button
             onClick={() => setTab('messages')}
-            className="flex-1 border-2 border-black rounded-xl font-black transition"
+            className="flex-1 border-2 border-black rounded-xl font-black transition inline-flex items-center justify-center"
             style={{
               padding: '10px',
               fontSize: '12px',
               backgroundColor: tab === 'messages' ? '#D4F0F0' : '#FFFDF5',
               color: '#000',
               boxShadow: tab === 'messages' ? '3px 3px 0 0 black' : 'none',
+              gap: '6px',
             }}
           >
-            💬 messages
+            <span>💬 messages</span>
+            {totalUnread > 0 && (
+              <span
+                className="border-2 border-black"
+                style={{
+                  backgroundColor: '#FF8BA7',
+                  color: '#000',
+                  fontSize: '10px',
+                  padding: '1px 7px',
+                  borderRadius: '999px',
+                  fontWeight: 900,
+                  lineHeight: 1.2,
+                }}
+              >
+                {totalUnread}
+              </span>
+            )}
           </button>
         </div>
 
@@ -563,6 +616,7 @@ export default function VaultPage() {
                   const initials = prefix.slice(0, 2).toUpperCase();
                   const colors = ['#E2F0D9', '#FFD1DC', '#E6E6FA'];
                   const bg = colors[i % colors.length];
+                  const unread = unreadBySender[p.id] ?? 0;
                   return (
                     <button
                       key={p.id}
@@ -574,18 +628,40 @@ export default function VaultPage() {
                         gap: '12px',
                       }}
                     >
-                      <div
-                        className="flex items-center justify-center rounded-xl border-4 border-black font-display"
-                        style={{
-                          width: '44px',
-                          height: '44px',
-                          fontSize: '11px',
-                          backgroundColor: bg,
-                          color: '#000',
-                          flexShrink: 0,
-                        }}
-                      >
-                        {initials}
+                      <div className="relative shrink-0">
+                        <div
+                          className="flex items-center justify-center rounded-xl border-4 border-black font-display"
+                          style={{
+                            width: '44px',
+                            height: '44px',
+                            fontSize: '11px',
+                            backgroundColor: bg,
+                            color: '#000',
+                          }}
+                        >
+                          {initials}
+                        </div>
+                        {unread > 0 && (
+                          <span
+                            className="absolute border-2 border-black font-black"
+                            style={{
+                              top: '-6px',
+                              right: '-6px',
+                              backgroundColor: '#FF8BA7',
+                              color: '#000',
+                              fontSize: '10px',
+                              minWidth: '20px',
+                              height: '20px',
+                              padding: '0 5px',
+                              borderRadius: '999px',
+                              lineHeight: '16px',
+                              textAlign: 'center',
+                              boxShadow: '2px 2px 0 0 black',
+                            }}
+                          >
+                            {unread}
+                          </span>
+                        )}
                       </div>
                       <div className="min-w-0 flex-1">
                         <p
@@ -596,9 +672,17 @@ export default function VaultPage() {
                         </p>
                         <p
                           className="font-bold"
-                          style={{ fontSize: '10px', color: 'rgba(0,0,0,0.5)' }}
+                          style={{
+                            fontSize: '10px',
+                            color:
+                              unread > 0
+                                ? '#C2185B'
+                                : 'rgba(0,0,0,0.5)',
+                          }}
                         >
-                          tap to open dm
+                          {unread > 0
+                            ? `${unread} new message${unread > 1 ? 's' : ''}`
+                            : 'tap to open dm'}
                         </p>
                       </div>
                       <span style={{ fontSize: '18px', color: '#000' }}>›</span>
