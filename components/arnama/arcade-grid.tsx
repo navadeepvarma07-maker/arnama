@@ -44,6 +44,7 @@ const cartridges = [
     icon: Music4,
     color: 'mint' as const,
     tilt: 'right' as const,
+    href: '/tunes',
   },
   {
     title: 'VAULT',
