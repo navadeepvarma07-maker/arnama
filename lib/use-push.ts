@@ -33,7 +33,6 @@ async function getOrRegisterSW(timeout = 10000): Promise<ServiceWorkerRegistrati
   // Wait for activation with timeout
   return new Promise<ServiceWorkerRegistration>((resolve, reject) => {
     const timer = setTimeout(() => {
-      // Try anyway with what we have
       if (reg && reg.active) {
         resolve(reg);
       } else {
@@ -41,14 +40,12 @@ async function getOrRegisterSW(timeout = 10000): Promise<ServiceWorkerRegistrati
       }
     }, timeout);
 
-    // If already active, resolve now
     if (reg.active) {
       clearTimeout(timer);
       resolve(reg);
       return;
     }
 
-    // Otherwise wait for update
     reg.addEventListener('updatefound', () => {
       const installing = reg!.installing;
       if (!installing) return;
@@ -61,7 +58,6 @@ async function getOrRegisterSW(timeout = 10000): Promise<ServiceWorkerRegistrati
       });
     });
 
-    // Also poll every 500ms as backup
     const poll = setInterval(() => {
       if (reg!.active) {
         clearInterval(poll);
@@ -70,7 +66,6 @@ async function getOrRegisterSW(timeout = 10000): Promise<ServiceWorkerRegistrati
       }
     }, 500);
 
-    // Cleanup
     setTimeout(() => clearInterval(poll), timeout + 100);
   });
 }
@@ -94,6 +89,22 @@ export function usePush() {
       setLoading(false);
       return;
     }
+
+    // ==========================================
+    // REGISTER THE HAND-WRITTEN SERVICE WORKER
+    // ==========================================
+    navigator.serviceWorker
+      .register('/sw.js', { scope: '/' })
+      .then((reg) => {
+        console.log('[push] SW registered successfully');
+        // If a new SW is waiting, tell it to activate immediately
+        if (reg.waiting) {
+          reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        }
+      })
+      .catch((err) => {
+        console.error('[push] SW registration failed:', err);
+      });
 
     setPermission(Notification.permission);
 
@@ -138,7 +149,6 @@ export function usePush() {
         return;
       }
 
-      // Explicitly register/wait for SW
       const reg = await getOrRegisterSW(12000);
       console.log('[push] SW ready');
 
@@ -149,7 +159,6 @@ export function usePush() {
         return;
       }
 
-      // Clean any existing subscription
       const existing = await reg.pushManager.getSubscription();
       if (existing) {
         console.log('[push] removing old subscription');
