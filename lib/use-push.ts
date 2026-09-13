@@ -15,28 +15,60 @@ function urlBase64ToUint8Array(base64String: string) {
 }
 
 export function usePush() {
-  const [permission, setPermission] = useState<NotificationPermission>('default');
+  const [permission, setPermission] =
+    useState<NotificationPermission>('default');
   const [subscribed, setSubscribed] = useState(false);
   const [supported, setSupported] = useState(true);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const ok = 'serviceWorker' in navigator && 'PushManager' in window;
-    setSupported(ok);
-    if (!ok) {
+
+    const hasSW = 'serviceWorker' in navigator;
+    const hasPush = 'PushManager' in window;
+    const hasNotif = 'Notification' in window;
+
+    if (!hasSW || !hasPush || !hasNotif) {
+      setSupported(false);
       setLoading(false);
       return;
     }
+
     setPermission(Notification.permission);
 
-    navigator.serviceWorker.ready
-      .then(async (reg) => {
+    // Don't wait for SW.ready — just check current registration
+    let cancelled = false;
+
+    async function checkExisting() {
+      try {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (!reg) {
+          // SW not registered yet — that's fine on dev
+          if (!cancelled) setLoading(false);
+          return;
+        }
         const sub = await reg.pushManager.getSubscription();
-        setSubscribed(!!sub);
-      })
-      .catch((err) => console.debug('SW ready failed:', err))
-      .finally(() => setLoading(false));
+        if (!cancelled) {
+          setSubscribed(!!sub);
+          setLoading(false);
+        }
+      } catch (err) {
+        console.debug('push check failed:', err);
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    checkExisting();
+
+    // Safety timeout — if nothing resolves in 2s, show the button anyway
+    const timer = setTimeout(() => {
+      if (!cancelled) setLoading(false);
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, []);
 
   async function subscribe() {
@@ -46,11 +78,20 @@ export function usePush() {
       setPermission(perm);
       if (perm !== 'granted') return;
 
-      const reg = await navigator.serviceWorker.ready;
+      // Wait for SW to be ready (with timeout)
+      const reg = await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise<ServiceWorkerRegistration>((_, reject) =>
+          setTimeout(() => reject(new Error('SW timeout')), 8000)
+        ),
+      ]);
 
       const vapidPublic = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
       if (!vapidPublic) {
         console.error('VAPID public key missing from env');
+        alert(
+          '⚠️ Push is not configured yet. Please try again in a moment.'
+        );
         return;
       }
 
@@ -69,20 +110,30 @@ export function usePush() {
 
       if (error) {
         console.error('saving subscription failed:', error);
+        alert('⚠️ Could not save subscription. Try again.');
         return;
       }
 
       setSubscribed(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error('push subscribe failed:', err);
+      if (err?.message === 'SW timeout') {
+        alert(
+          '⚠️ Notifications need a moment to set up. Refresh the page and try again.'
+        );
+      } else {
+        alert('⚠️ Could not enable notifications: ' + (err?.message ?? 'unknown'));
+      }
     }
   }
 
   async function unsubscribe() {
     try {
-      const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.getSubscription();
-      if (sub) await sub.unsubscribe();
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg) {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) await sub.unsubscribe();
+      }
 
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
