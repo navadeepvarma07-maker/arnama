@@ -38,12 +38,55 @@ function shortName(email: string): string {
   return email.split('@')[0];
 }
 
+/** Find a winning move for the given mark, or null */
+function findWinningMove(board: string[], mark: 'X' | 'O'): number | null {
+  for (const [a, b, c] of WIN_LINES) {
+    const cells = [board[a], board[b], board[c]];
+    const markCount = cells.filter((x) => x === mark).length;
+    const emptyCount = cells.filter((x) => x === '').length;
+    if (markCount === 2 && emptyCount === 1) {
+      if (board[a] === '') return a;
+      if (board[b] === '') return b;
+      if (board[c] === '') return c;
+    }
+  }
+  return null;
+}
+
+/** Bot decides its next move */
+function botMove(board: string[]): number {
+  // 1. Win if possible
+  const win = findWinningMove(board, 'O');
+  if (win !== null) return win;
+
+  // 2. Block X from winning
+  const block = findWinningMove(board, 'X');
+  if (block !== null) return block;
+
+  // 3. Take center
+  if (board[4] === '') return 4;
+
+  // 4. Take a random corner
+  const corners = [0, 2, 6, 8].filter((i) => board[i] === '');
+  if (corners.length > 0) {
+    return corners[Math.floor(Math.random() * corners.length)];
+  }
+
+  // 5. Take any empty
+  const empties = board
+    .map((c, i) => (c === '' ? i : -1))
+    .filter((i) => i >= 0);
+  return empties[Math.floor(Math.random() * empties.length)];
+}
+
 export default function TicTacToePage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [match, setMatch] = useState<Match | null>(null);
+  const [isBotMode, setIsBotMode] = useState(false);
+  const [botThinking, setBotThinking] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
@@ -75,9 +118,9 @@ export default function TicTacToePage() {
       });
   }, [userId]);
 
-  // Realtime
+  // Realtime (skip in bot mode)
   useEffect(() => {
-    if (!match) return;
+    if (!match || isBotMode) return;
     const channel = supabase
       .channel(`ttt-${match.id}`)
       .on(
@@ -89,15 +132,66 @@ export default function TicTacToePage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [match?.id]);
+  }, [match?.id, isBotMode]);
 
-  // Quick match — join an existing waiting game, or create one
+  // Bot's turn — plays automatically after a short delay
+  useEffect(() => {
+    if (!isBotMode || !match) return;
+    if (match.status !== 'playing') return;
+    if (match.current_turn !== 'O') return;
+
+    setBotThinking(true);
+    const timer = setTimeout(() => {
+      setMatch((prev) => {
+        if (!prev) return prev;
+        const move = botMove(prev.board);
+        const nextBoard = [...prev.board];
+        nextBoard[move] = 'O';
+        const winner = detectWinner(nextBoard);
+
+        const next: Match = {
+          ...prev,
+          board: nextBoard,
+          current_turn: winner ? prev.current_turn : 'X',
+          status: winner ? 'finished' : 'playing',
+          winner: winner,
+          updated_at: new Date().toISOString(),
+        };
+        return next;
+      });
+      setBotThinking(false);
+    }, 600);
+
+    return () => clearTimeout(timer);
+  }, [isBotMode, match?.current_turn, match?.status, match?.board]);
+
+  // --- Bot match ---
+  function startBotMatch() {
+    if (!userId || !email) return;
+    setError('');
+    const now = new Date().toISOString();
+    setMatch({
+      id: `bot-${Date.now()}`,
+      player_x_id: userId,
+      player_x_email: email,
+      player_o_id: 'BOT',
+      player_o_email: 'bot@arnama',
+      board: ['', '', '', '', '', '', '', '', ''],
+      current_turn: 'X',
+      status: 'playing',
+      winner: null,
+      created_at: now,
+      updated_at: now,
+    });
+    setIsBotMode(true);
+  }
+
+  // --- Quick match (friends) ---
   async function quickMatch() {
     if (!userId || !email) return;
     setError('');
     setCreating(true);
 
-    // find a waiting game not created by me
     const { data: openGames, error: findErr } = await supabase
       .from('arcade_ttt')
       .select('*')
@@ -125,15 +219,10 @@ export default function TicTacToePage() {
         .eq('id', target.id)
         .select();
 
-      if (error) {
-        setError('⚠️ ' + error.message);
-      } else if (!data || data.length === 0) {
-        setError('⚠️ Could not join this game — try again');
-      } else {
-        setMatch(data[0] as Match);
-      }
+      if (error) setError('⚠️ ' + error.message);
+      else if (!data || data.length === 0) setError('⚠️ Could not join this game — try again');
+      else setMatch(data[0] as Match);
     } else {
-      // create new waiting game
       const { data, error } = await supabase
         .from('arcade_ttt')
         .insert({
@@ -143,13 +232,9 @@ export default function TicTacToePage() {
         })
         .select();
 
-      if (error) {
-        setError('⚠️ ' + error.message);
-      } else if (!data || data.length === 0) {
-        setError('⚠️ Could not create game');
-      } else {
-        setMatch(data[0] as Match);
-      }
+      if (error) setError('⚠️ ' + error.message);
+      else if (!data || data.length === 0) setError('⚠️ Could not create game');
+      else setMatch(data[0] as Match);
     }
     setCreating(false);
   }
@@ -185,6 +270,9 @@ export default function TicTacToePage() {
     // optimistic
     setMatch((prev) => (prev ? ({ ...prev, ...updates } as Match) : prev));
 
+    // Bot mode → don't hit the DB
+    if (isBotMode) return;
+
     const { error } = await supabase
       .from('arcade_ttt')
       .update(updates)
@@ -195,15 +283,49 @@ export default function TicTacToePage() {
   async function leaveMatch() {
     if (!match) return;
     if (!confirm('Leave this match?')) return;
+
+    // Bot mode → just clear locally
+    if (isBotMode) {
+      setMatch(null);
+      setIsBotMode(false);
+      setBotThinking(false);
+      return;
+    }
+
     await supabase.from('arcade_ttt').delete().eq('id', match.id);
     setMatch(null);
   }
 
-  async function playAgain() {
+  function playAgain() {
     if (!match) return;
-    await supabase.from('arcade_ttt').delete().eq('id', match.id);
-    setMatch(null);
-    setTimeout(() => quickMatch(), 100);
+
+    // Bot mode → reset board
+    if (isBotMode) {
+      setMatch((prev) =>
+        prev
+          ? {
+              ...prev,
+              board: ['', '', '', '', '', '', '', '', ''],
+              current_turn: 'X',
+              status: 'playing',
+              winner: null,
+              updated_at: new Date().toISOString(),
+            }
+          : prev
+      );
+      setBotThinking(false);
+      return;
+    }
+
+    // Friend mode → delete + new match
+    supabase
+      .from('arcade_ttt')
+      .delete()
+      .eq('id', match.id)
+      .then(() => {
+        setMatch(null);
+        setTimeout(() => quickMatch(), 100);
+      });
   }
 
   const myMark: 'X' | 'O' | null = useMemo(() => {
@@ -242,7 +364,9 @@ export default function TicTacToePage() {
                 marginTop: '2px',
               }}
             >
-              {myMark === 'X'
+              {isBotMode
+                ? 'playing vs bot 🤖'
+                : myMark === 'X'
                 ? 'you are X (first)'
                 : myMark === 'O'
                 ? 'you are O'
@@ -259,7 +383,7 @@ export default function TicTacToePage() {
           </Link>
         </div>
 
-        {/* No match */}
+        {/* No match → pick bot or friend */}
         {!match && (
           <div
             className="border-4 border-black rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] text-center flex flex-col items-center"
@@ -274,11 +398,12 @@ export default function TicTacToePage() {
               style={{
                 fontSize: '11px',
                 color: 'rgba(0,0,0,0.55)',
-                maxWidth: '300px',
+                maxWidth: '320px',
               }}
             >
-              we'll pair you with a random friend, or create a new game for them to join
+              play against a friend, or warm up against the bot
             </p>
+
             {error && (
               <div
                 className="border-2 border-black bg-white text-black text-xs font-bold rounded-lg w-full"
@@ -287,19 +412,29 @@ export default function TicTacToePage() {
                 {error}
               </div>
             )}
-            <button
-              onClick={quickMatch}
-              disabled={creating}
-              className="inline-flex items-center border-2 border-black bg-[#E2F0D9] text-black font-black text-sm rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition disabled:opacity-50"
-              style={{ padding: '14px 26px', gap: '10px' }}
-            >
-              <span style={{ fontSize: '18px' }}>
-                {creating ? '···' : '▶'}
-              </span>
-              <span className="tracking-wider">
-                {creating ? 'FINDING' : 'QUICK MATCH'}
-              </span>
-            </button>
+
+            <div className="flex flex-col sm:flex-row w-full" style={{ gap: '10px' }}>
+              <button
+                onClick={quickMatch}
+                disabled={creating}
+                className="flex-1 inline-flex items-center justify-center border-2 border-black bg-[#E2F0D9] text-black font-black text-sm rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition disabled:opacity-50"
+                style={{ padding: '14px 20px', gap: '10px' }}
+              >
+                <span style={{ fontSize: '18px' }}>{creating ? '···' : '👥'}</span>
+                <span className="tracking-wider">
+                  {creating ? 'FINDING' : 'VS FRIEND'}
+                </span>
+              </button>
+
+              <button
+                onClick={startBotMatch}
+                className="flex-1 inline-flex items-center justify-center border-2 border-black bg-[#FFD1DC] text-black font-black text-sm rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition"
+                style={{ padding: '14px 20px', gap: '10px' }}
+              >
+                <span style={{ fontSize: '18px' }}>🤖</span>
+                <span className="tracking-wider">VS BOT</span>
+              </button>
+            </div>
           </div>
         )}
 
@@ -323,16 +458,8 @@ export default function TicTacToePage() {
                 maxWidth: '300px',
               }}
             >
-              you're X. as soon as a friend taps "quick match", the game begins
+              you're X. as soon as a friend taps "vs friend", the game begins
             </p>
-            {error && (
-              <div
-                className="border-2 border-black bg-white text-black text-xs font-bold rounded-lg w-full"
-                style={{ padding: '8px 12px' }}
-              >
-                {error}
-              </div>
-            )}
             <button
               onClick={leaveMatch}
               className="border-2 border-black bg-[#FFD1DC] text-black font-black text-xs rounded-lg shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition"
@@ -356,9 +483,15 @@ export default function TicTacToePage() {
                 isWinner={match.status === 'finished' && match.winner === 'X'}
               />
               <PlayerChip
-                label={match.player_o_email ? shortName(match.player_o_email) : '???'}
+                label={
+                  isBotMode
+                    ? 'bot'
+                    : match.player_o_email
+                    ? shortName(match.player_o_email)
+                    : '???'
+                }
                 mark="O"
-                isMe={match.player_o_id === userId}
+                isMe={false}
                 isTurn={match.status === 'playing' && match.current_turn === 'O'}
                 isWinner={match.status === 'finished' && match.winner === 'O'}
               />
@@ -439,6 +572,8 @@ export default function TicTacToePage() {
                 <p className="font-black" style={{ fontSize: '14px', color: '#000' }}>
                   {isMyTurn
                     ? '🎯 your turn!'
+                    : botThinking
+                    ? '🤖 bot is thinking...'
                     : `⏳ waiting for ${shortName(
                         match.current_turn === 'X'
                           ? match.player_x_email
@@ -452,6 +587,8 @@ export default function TicTacToePage() {
                     ? "🤝 it's a draw"
                     : match.winner === myMark
                     ? '🏆 you win!'
+                    : isBotMode
+                    ? '🤖 bot wins!'
                     : '😔 you lost'}
                 </p>
               )}
