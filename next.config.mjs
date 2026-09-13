@@ -2,6 +2,8 @@ import withPWAInit from '@ducanh2912/next-pwa';
 
 const withPWA = withPWAInit({
   dest: 'public',
+  register: true,
+  skipWaiting: true,
   cacheOnFrontEndNav: true,
   aggressiveFrontEndNavCaching: true,
   reloadOnOnline: true,
@@ -9,7 +11,7 @@ const withPWA = withPWAInit({
   fallbacks: {
     document: '/offline',
   },
-  customWorkerDir: 'worker',
+  customWorkerSrc: 'worker',
 });
 
 /** @type {import('next').NextConfig} */

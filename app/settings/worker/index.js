@@ -1,7 +1,5 @@
 /// <reference lib="webworker" />
 
-/* eslint-disable no-undef */
-
 self.addEventListener('push', (event) => {
     if (!event.data) return;
   
