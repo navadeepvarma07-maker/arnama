@@ -298,3 +298,102 @@ html[data-theme="light"] [style*="rgba(255, 253, 245"] {
 h1, h2, h3, p, span, div {
   transition: color 0.15s ease, background-color 0.2s ease;
 }
+/* ============================================ */
+/* CHAT ANIMATIONS                              */
+/* ============================================ */
+
+@keyframes msg-in-right {
+  from { opacity: 0; transform: translateX(24px) scale(0.96); }
+  to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+@keyframes msg-in-left {
+  from { opacity: 0; transform: translateX(-24px) scale(0.96); }
+  to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.msg-mine {
+  animation: msg-in-right 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.msg-theirs {
+  animation: msg-in-left 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.msg-meta {
+  animation: fade-up 0.25s ease-out both;
+}
+
+/* 🐶 wagging tail — used on back button */
+@keyframes wag {
+  0%, 100% { transform: rotate(-18deg); }
+  50%      { transform: rotate(18deg); }
+}
+.group:hover .animate-wag {
+  animation: wag 0.28s ease-in-out infinite;
+  transform-origin: 50% 90%;
+}
+
+/* 🐱 purring — used on send button */
+@keyframes purr {
+  0%, 100% { transform: translateX(0) rotate(0); }
+  25%      { transform: translateX(-2px) rotate(-6deg); }
+  75%      { transform: translateX(2px) rotate(6deg); }
+}
+.group:hover .animate-purr {
+  animation: purr 0.22s ease-in-out infinite;
+  transform-origin: 50% 50%;
+}
+/* ============================================ */
+/* CHAT ANIMATIONS                              */
+/* ============================================ */
+
+@keyframes msg-in-right {
+  from { opacity: 0; transform: translateX(24px) scale(0.96); }
+  to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+@keyframes msg-in-left {
+  from { opacity: 0; transform: translateX(-24px) scale(0.96); }
+  to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.msg-mine {
+  animation: msg-in-right 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.msg-theirs {
+  animation: msg-in-left 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.msg-meta {
+  animation: fade-up 0.25s ease-out both;
+}
+
+/* 🐶 wagging tail */
+@keyframes wag {
+  0%, 100% { transform: rotate(-18deg); }
+  50%      { transform: rotate(18deg); }
+}
+.animate-wag {
+  display: inline-block;
+  animation: wag 0.35s ease-in-out infinite;
+  transform-origin: 50% 90%;
+}
+
+/* 🐱 purring */
+@keyframes purr {
+  0%, 100% { transform: translateX(0) rotate(0); }
+  25%      { transform: translateX(-2px) rotate(-6deg); }
+  75%      { transform: translateX(2px) rotate(6deg); }
+}
+.group:hover .animate-purr {
+  animation: purr 0.22s ease-in-out infinite;
+  transform-origin: 50% 50%;
+}

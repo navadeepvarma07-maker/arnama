@@ -21,7 +21,12 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [newBelow, setNewBelow] = useState(0);
+
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const isAtBottomRef = useRef(true);
+  const initialLoadDone = useRef(false);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -52,7 +57,13 @@ export default function ChatPage() {
       .limit(200)
       .then(({ data, error }) => {
         if (error) console.error(error);
-        else setMessages(data ?? []);
+        else {
+          setMessages(data ?? []);
+          setTimeout(() => {
+            bottomRef.current?.scrollIntoView({ behavior: 'auto' });
+            initialLoadDone.current = true;
+          }, 80);
+        }
       });
   }, [email]);
 
@@ -69,6 +80,16 @@ export default function ChatPage() {
             if (prev.some((m) => m.id === incoming.id)) return prev;
             return [...prev, incoming];
           });
+
+          if (isAtBottomRef.current) {
+            setTimeout(() => {
+              bottomRef.current?.scrollIntoView({
+                behavior: initialLoadDone.current ? 'smooth' : 'auto',
+              });
+            }, 60);
+          } else if (incoming.user_email !== email) {
+            setNewBelow((c) => c + 1);
+          }
         }
       )
       .subscribe();
@@ -77,9 +98,19 @@ export default function ChatPage() {
     };
   }, [email]);
 
-  useEffect(() => {
+  function handleScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    isAtBottomRef.current = atBottom;
+    if (atBottom) setNewBelow(0);
+  }
+
+  function scrollToBottom() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    setNewBelow(0);
+  }
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
@@ -96,6 +127,10 @@ export default function ChatPage() {
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimistic]);
+    isAtBottomRef.current = true;
+    setTimeout(() => {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 60);
 
     const { data, error } = await supabase
       .from('messages')
@@ -118,92 +153,270 @@ export default function ChatPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#1a0b2e] flex items-center justify-center text-white font-mono">
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'var(--bg-app, #1a0b2e)',
+          color: 'var(--text-primary, #FFFDF5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontFamily:
+            'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+          fontWeight: 800,
+        }}
+      >
         loading...
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#1a0b2e] p-4 sm:p-6 font-mono flex flex-col">
-      <div className="w-full max-w-2xl mx-auto flex flex-col flex-1 min-h-0 gap-4">
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        backgroundColor: 'var(--bg-app, #1a0b2e)',
+        fontFamily:
+          'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+        display: 'flex',
+        justifyContent: 'center',
+        overflow: 'hidden',
+        transition: 'background-color 0.2s ease',
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: '820px',
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          padding: '16px',
+          gap: '18px',
+          minHeight: 0,
+        }}
+      >
+        {/* ===== HEADER ===== */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexShrink: 0,
+            gap: '12px',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '14px',
+              minWidth: 0,
+            }}
+          >
+            {/* Oval avatar */}
+            <div
+              style={{
+                width: '56px',
+                height: '56px',
+                flexShrink: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                border: '4px solid black',
+                borderRadius: '999px',
+                backgroundColor: '#E6E6FA',
+                fontSize: '26px',
+                boxShadow: '4px 4px 0 0 black',
+                transform: 'rotate(-5deg)',
+              }}
+            >
+              💬
+            </div>
 
-        {/* Header */}
-        <div className="flex items-center justify-between shrink-0">
-          <h1 className="text-xl sm:text-2xl font-black text-white">💬 squad chat</h1>
+            <div style={{ minWidth: 0 }}>
+              <h1
+                style={{
+                  margin: 0,
+                  fontSize: '24px',
+                  fontWeight: 900,
+                  color: 'var(--text-primary, #FFFDF5)',
+                  lineHeight: 1,
+                  letterSpacing: '-0.02em',
+                }}
+              >
+                squad chat
+              </h1>
+              <p
+                style={{
+                  margin: '7px 0 0',
+                  fontSize: '10px',
+                  fontWeight: 800,
+                  color: 'var(--text-secondary, rgba(255,253,245,0.6))',
+                  lineHeight: 1.2,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.12em',
+                }}
+              >
+                🐶 the whole crew · {messages.length} messages 🐱
+              </p>
+            </div>
+          </div>
+
           <Link
             href="/"
-            className="inline-flex items-center border-4 border-black bg-[#E2F0D9] text-black font-black rounded-xl shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 hover:shadow-[7px_7px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition"
-            style={{ padding: '10px 20px', gap: '10px' }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '10px 20px',
+              border: '4px solid black',
+              borderRadius: '999px',
+              backgroundColor: '#E2F0D9',
+              color: '#000',
+              fontWeight: 900,
+              fontSize: '13px',
+              textDecoration: 'none',
+              boxShadow: '4px 4px 0 0 black',
+              flexShrink: 0,
+            }}
           >
-            <span className="text-base leading-none">←</span>
-            <span className="text-sm leading-none">back</span>
+            <span style={{ fontSize: '15px', lineHeight: 1 }}>←</span>
+            <span>back</span>
           </Link>
         </div>
 
-        {/* Messages window */}
-        <div className="border-4 border-black bg-white rounded-2xl shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] flex flex-col flex-1 min-h-0 overflow-hidden">
-
-          {/* Scrollable message list */}
-          <div className="overflow-y-auto flex-1" style={{ padding: '20px 24px' }}>
+        {/* ===== CHAT CONTAINER ===== */}
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            border: '4px solid black',
+            borderRadius: '28px',
+            backgroundColor: '#FFFDF5',
+            overflow: 'hidden',
+            boxShadow: '8px 8px 0 0 black',
+            position: 'relative',
+          }}
+        >
+          {/* Scrollable messages */}
+          <div
+            ref={scrollRef}
+            onScroll={handleScroll}
+            style={{
+              flex: 1,
+              minHeight: 0,
+              overflowY: 'auto',
+              padding: '24px 20px 8px',
+              WebkitOverflowScrolling: 'touch',
+            }}
+          >
             {messages.length === 0 && (
-              <p className="text-black/50 text-center italic py-8 text-sm">
-                no messages yet — say hi 👋
-              </p>
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  height: '100%',
+                  gap: '10px',
+                }}
+              >
+                <span style={{ fontSize: '44px' }}>🐱🐶</span>
+                <p
+                  style={{
+                    textAlign: 'center',
+                    fontStyle: 'italic',
+                    color: 'rgba(0,0,0,0.5)',
+                    fontSize: '13px',
+                    margin: 0,
+                  }}
+                >
+                  no messages yet — say hi 👋
+                </p>
+              </div>
             )}
 
-            <div className="flex flex-col" style={{ gap: '4px' }}>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '4px',
+              }}
+            >
               {messages.map((m, i) => {
                 const mine = m.user_email === email;
                 const sender = m.user_email.split('@')[0];
                 const prev = messages[i - 1];
-                const isNewGroup = !prev || prev.user_email !== m.user_email;
-                const time = new Date(m.created_at).toLocaleTimeString('en-IN', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  hour12: timeFormat !== '24h',
-                });
+                const isNewGroup =
+                  !prev || prev.user_email !== m.user_email;
+                const time = new Date(m.created_at).toLocaleTimeString(
+                  'en-IN',
+                  {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: timeFormat !== '24h',
+                  }
+                );
 
                 return (
                   <div
                     key={m.id}
-                    className="flex"
+                    className={mine ? 'msg-mine' : 'msg-theirs'}
                     style={{
+                      display: 'flex',
                       justifyContent: mine ? 'flex-end' : 'flex-start',
                       width: '100%',
-                      marginTop: isNewGroup && i > 0 ? '12px' : '0',
+                      marginTop: isNewGroup && i > 0 ? '16px' : '0',
                     }}
                   >
                     <div
-                      className="flex flex-col"
                       style={{
-                        maxWidth: '75%',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        maxWidth: '78%',
                         alignItems: mine ? 'flex-end' : 'flex-start',
                       }}
                     >
                       {isNewGroup && (
                         <div
-                          className="text-[10px] font-black uppercase tracking-wider text-black/40"
+                          className="msg-meta"
                           style={{
-                            marginBottom: '6px',
-                            paddingLeft: '4px',
-                            paddingRight: '4px',
+                            fontSize: '10px',
+                            fontWeight: 900,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.1em',
+                            color: 'rgba(0,0,0,0.4)',
+                            marginBottom: '7px',
+                            paddingLeft: '8px',
+                            paddingRight: '8px',
                           }}
                         >
                           {mine ? 'you' : sender} · {time}
                         </div>
                       )}
                       <div
-                        className={`inline-block border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] rounded-2xl ${
-                          mine ? 'bg-[#E2F0D9]' : 'bg-[#FFD1DC]'
-                        }`}
-                        style={{ padding: '10px 16px' }}
+                        style={{
+                          display: 'inline-block',
+                          border: '2px solid black',
+                          borderRadius: mine
+                            ? '24px 24px 6px 24px'
+                            : '24px 24px 24px 6px',
+                          padding: '10px 16px',
+                          backgroundColor: mine ? '#E2F0D9' : '#FFD1DC',
+                          boxShadow: '2px 2px 0 0 black',
+                        }}
                       >
                         <p
-                          className="text-black m-0"
                           style={{
+                            margin: 0,
+                            color: '#000',
                             fontSize: '13.5px',
-                            lineHeight: 1.4,
+                            lineHeight: 1.45,
                             wordBreak: 'break-word',
                             whiteSpace: 'pre-wrap',
                           }}
@@ -215,15 +428,48 @@ export default function ChatPage() {
                   </div>
                 );
               })}
+              <div ref={bottomRef} style={{ height: '4px' }} />
             </div>
-            <div ref={bottomRef} />
           </div>
+
+          {/* New messages pill */}
+          {newBelow > 0 && (
+            <button
+              onClick={scrollToBottom}
+              style={{
+                position: 'absolute',
+                bottom: '92px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                padding: '8px 18px',
+                border: '3px solid black',
+                borderRadius: '999px',
+                backgroundColor: '#FF8BA7',
+                color: '#000',
+                fontWeight: 900,
+                fontSize: '11px',
+                boxShadow: '3px 3px 0 0 black',
+                zIndex: 5,
+                cursor: 'pointer',
+                animation: 'fade-up 0.25s ease-out both',
+              }}
+            >
+              ↓ {newBelow} new message{newBelow > 1 ? 's' : ''}
+            </button>
+          )}
 
           {/* Input bar */}
           <form
             onSubmit={handleSend}
-            className="border-t-4 border-black bg-[#E6E6FA] flex shrink-0 items-stretch"
-            style={{ padding: '12px', gap: '10px' }}
+            style={{
+              flexShrink: 0,
+              borderTop: '4px solid black',
+              backgroundColor: '#E6E6FA',
+              display: 'flex',
+              alignItems: 'stretch',
+              padding: '12px',
+              gap: '10px',
+            }}
           >
             <input
               type="text"
@@ -231,18 +477,52 @@ export default function ChatPage() {
               onChange={(e) => setInput(e.target.value)}
               placeholder="type a message..."
               disabled={sending}
-              className="flex-1 min-w-0 border-2 border-black rounded-lg bg-white text-black text-sm focus:outline-none disabled:opacity-50"
-              style={{ padding: '11px 16px' }}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                border: '3px solid black',
+                borderRadius: '999px',
+                backgroundColor: 'white',
+                color: '#000',
+                fontSize: '14px',
+                padding: '11px 20px',
+                outline: 'none',
+                opacity: sending ? 0.5 : 1,
+                fontWeight: 600,
+              }}
             />
             <button
               type="submit"
               disabled={sending || !input.trim()}
-              className="inline-flex items-center border-2 border-black bg-[#E2F0D9] text-black text-xs font-black rounded-lg shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 hover:shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] transition disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] shrink-0"
-              style={{ padding: '11px 18px', gap: '8px' }}
+              className="group"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '7px',
+                padding: '11px 20px',
+                border: '3px solid black',
+                borderRadius: '999px',
+                backgroundColor: '#E2F0D9',
+                color: '#000',
+                fontWeight: 900,
+                fontSize: '12px',
+                boxShadow: '3px 3px 0 0 black',
+                cursor:
+                  sending || !input.trim() ? 'not-allowed' : 'pointer',
+                opacity: sending || !input.trim() ? 0.5 : 1,
+                flexShrink: 0,
+                transition:
+                  'transform 0.15s ease, box-shadow 0.15s ease',
+              }}
             >
-              <span className="text-sm leading-none">{sending ? '···' : '▶'}</span>
-              <span className="leading-none tracking-wider">
-                {sending ? 'SENDING' : 'SEND'}
+              <span
+                className="animate-purr"
+                style={{ fontSize: '17px', lineHeight: 1 }}
+              >
+                🐱
+              </span>
+              <span style={{ letterSpacing: '0.06em' }}>
+                {sending ? '...' : 'SEND'}
               </span>
             </button>
           </form>

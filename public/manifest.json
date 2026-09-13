@@ -1,0 +1,24 @@
+{
+    "name": "arnama",
+    "short_name": "arnama",
+    "description": "Your private arcade hangout with the crew.",
+    "start_url": "/",
+    "display": "standalone",
+    "orientation": "portrait",
+    "background_color": "#1a0b2e",
+    "theme_color": "#1a0b2e",
+    "icons": [
+      {
+        "src": "/icon.svg",
+        "sizes": "any",
+        "type": "image/svg+xml",
+        "purpose": "any"
+      },
+      {
+        "src": "/icon.svg",
+        "sizes": "any",
+        "type": "image/svg+xml",
+        "purpose": "maskable"
+      }
+    ]
+  }

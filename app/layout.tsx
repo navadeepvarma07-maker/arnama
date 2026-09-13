@@ -19,6 +19,12 @@ export const metadata: Metadata = {
   title: 'arnama · friends portal',
   description: 'Your private arcade hangout with the crew.',
   generator: 'v0.app',
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    title: 'arnama',
+    statusBarStyle: 'black-translucent',
+  },
   icons: {
     icon: [
       {

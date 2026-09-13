@@ -34,7 +34,8 @@ const NOTE_COLORS = ['#FFF5BA', '#FFD1DC', '#E2F0D9', '#E6E6FA', '#D4F0F0'];
 
 function colorFor(id: string): string {
   let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = (hash * 17 + id.charCodeAt(i)) | 0;
+  for (let i = 0; i < id.length; i++)
+    hash = (hash * 17 + id.charCodeAt(i)) | 0;
   return NOTE_COLORS[Math.abs(hash) % NOTE_COLORS.length];
 }
 
@@ -70,7 +71,7 @@ export default function VaultPage() {
   const [email, setEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // -------- NOTES --------
+  // NOTES
   const [notes, setNotes] = useState<Note[]>([]);
   const [noteTitle, setNoteTitle] = useState('');
   const [noteContent, setNoteContent] = useState('');
@@ -78,7 +79,7 @@ export default function VaultPage() {
   const [noteError, setNoteError] = useState('');
   const [editingNote, setEditingNote] = useState<Note | null>(null);
 
-  // -------- DMs --------
+  // DMs
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [activeThread, setActiveThread] = useState<Profile | null>(null);
   const [dms, setDms] = useState<DM[]>([]);
@@ -87,8 +88,11 @@ export default function VaultPage() {
   const [threadLoading, setThreadLoading] = useState(false);
   const [unreadBySender, setUnreadBySender] = useState<Record<string, number>>({});
   const dmBottomRef = useRef<HTMLDivElement>(null);
+  const dmScrollRef = useRef<HTMLDivElement>(null);
+  const dmAtBottomRef = useRef(true);
+  const dmInitialLoadDone = useRef(false);
 
-  // Auth + mark caught-up
+  // Auth
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       const user = data.user;
@@ -110,7 +114,7 @@ export default function VaultPage() {
     });
   }, []);
 
-  // Load notes
+  // Notes
   useEffect(() => {
     if (!userId) return;
     supabase
@@ -124,7 +128,7 @@ export default function VaultPage() {
       });
   }, [userId]);
 
-  // Load profiles + compute per-sender unread counts
+  // Profiles + unread counts
   useEffect(() => {
     if (!userId) return;
     Promise.all([
@@ -153,13 +157,14 @@ export default function VaultPage() {
     });
   }, [userId]);
 
-  // Load DMs for active thread
+  // Load DMs for thread
   useEffect(() => {
     if (!userId || !activeThread) {
       setDms([]);
       return;
     }
     setThreadLoading(true);
+    dmInitialLoadDone.current = false;
     supabase
       .from('vault_dms')
       .select('*')
@@ -169,10 +174,15 @@ export default function VaultPage() {
       .order('created_at', { ascending: true })
       .then(({ data, error }) => {
         if (error) console.error(error);
-        else setDms(data ?? []);
+        else {
+          setDms(data ?? []);
+          setTimeout(() => {
+            dmBottomRef.current?.scrollIntoView({ behavior: 'auto' });
+            dmInitialLoadDone.current = true;
+          }, 80);
+        }
         setThreadLoading(false);
 
-        // Mark incoming as read
         supabase
           .from('vault_dms')
           .update({ read_at: new Date().toISOString() })
@@ -181,14 +191,10 @@ export default function VaultPage() {
           .is('read_at', null)
           .select()
           .then(({ data, error }) => {
-            if (error) {
-              console.error('❌ Mark read failed:', error);
-            } else {
-              console.log(`✓ Marked ${data?.length ?? 0} DM(s) as read`);
-            }
+            if (error) console.error('❌ Mark read failed:', error);
+            else console.log(`✓ Marked ${data?.length ?? 0} DM(s) as read`);
           });
 
-        // Clear this sender's unread count locally
         setUnreadBySender((prev) => {
           const next = { ...prev };
           delete next[activeThread.id];
@@ -197,7 +203,7 @@ export default function VaultPage() {
       });
   }, [userId, activeThread]);
 
-  // Realtime DMs (badge + thread)
+  // Realtime
   useEffect(() => {
     if (!userId) return;
     const channel = supabase
@@ -227,6 +233,13 @@ export default function VaultPage() {
               if (prev.some((x) => x.id === m.id)) return prev;
               return [...prev, m];
             });
+            if (dmAtBottomRef.current) {
+              setTimeout(() => {
+                dmBottomRef.current?.scrollIntoView({
+                  behavior: dmInitialLoadDone.current ? 'smooth' : 'auto',
+                });
+              }, 60);
+            }
           }
         }
       )
@@ -236,12 +249,14 @@ export default function VaultPage() {
     };
   }, [userId, activeThread]);
 
-  // Auto-scroll DMs
-  useEffect(() => {
-    dmBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [dms]);
+  function handleDmScroll() {
+    const el = dmScrollRef.current;
+    if (!el) return;
+    dmAtBottomRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }
 
-  // -------- NOTE ACTIONS --------
+  // Notes actions
   async function saveNote(e: React.FormEvent) {
     e.preventDefault();
     setNoteError('');
@@ -288,7 +303,6 @@ export default function VaultPage() {
     setEditingNote(n);
     setNoteTitle(n.title ?? '');
     setNoteContent(n.content);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   function cancelNoteEdit() {
@@ -304,7 +318,7 @@ export default function VaultPage() {
     if (!error) setNotes((prev) => prev.filter((x) => x.id !== n.id));
   }
 
-  // -------- DM ACTIONS --------
+  // DM action
   async function sendDm(e: React.FormEvent) {
     e.preventDefault();
     const text = dmInput.trim();
@@ -323,6 +337,10 @@ export default function VaultPage() {
       read_at: null,
     };
     setDms((prev) => [...prev, optimistic]);
+    dmAtBottomRef.current = true;
+    setTimeout(() => {
+      dmBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 60);
 
     const { data, error } = await supabase
       .from('vault_dms')
@@ -351,7 +369,19 @@ export default function VaultPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#1a0b2e] flex items-center justify-center text-white font-mono">
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'var(--bg-app, #1a0b2e)',
+          color: 'var(--text-primary, #FFFDF5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontFamily: 'ui-monospace, monospace',
+          fontWeight: 800,
+        }}
+      >
         loading...
       </div>
     );
@@ -360,64 +390,175 @@ export default function VaultPage() {
   const totalUnread = Object.values(unreadBySender).reduce((a, b) => a + b, 0);
 
   return (
-    <div className="min-h-screen bg-[#1a0b2e] p-4 sm:p-6 font-mono flex flex-col">
-      <div className="w-full max-w-2xl mx-auto flex flex-col gap-4">
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        backgroundColor: 'var(--bg-app, #1a0b2e)',
+        fontFamily: 'ui-monospace, monospace',
+        display: 'flex',
+        justifyContent: 'center',
+        overflow: 'hidden',
+        transition: 'background-color 0.2s ease',
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: '820px',
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          padding: '16px',
+          gap: '14px',
+          minHeight: 0,
+        }}
+      >
+        {/* ===== HEADER ===== */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexShrink: 0,
+            gap: '12px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0 }}>
+            <div
+              style={{
+                width: '56px',
+                height: '56px',
+                flexShrink: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                border: '4px solid black',
+                borderRadius: '999px',
+                backgroundColor: '#E6E6FA',
+                fontSize: '26px',
+                boxShadow: '4px 4px 0 0 black',
+                transform: 'rotate(-5deg)',
+              }}
+            >
+              🔒
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <h1
+                style={{
+                  margin: 0,
+                  fontSize: '24px',
+                  fontWeight: 900,
+                  color: 'var(--text-primary, #FFFDF5)',
+                  lineHeight: 1,
+                  letterSpacing: '-0.02em',
+                }}
+              >
+                vault
+              </h1>
+              <p
+                style={{
+                  margin: '7px 0 0',
+                  fontSize: '10px',
+                  fontWeight: 800,
+                  color: 'var(--text-secondary, rgba(255,253,245,0.6))',
+                  lineHeight: 1.2,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.12em',
+                }}
+              >
+                🔒 private · just for you
+              </p>
+            </div>
+          </div>
 
-        {/* Header */}
-        <div className="flex items-center justify-between shrink-0">
-          <h1 className="text-xl sm:text-2xl font-black text-white">🔒 vault</h1>
           <Link
             href="/"
-            className="inline-flex items-center border-4 border-black bg-[#E2F0D9] text-black font-black rounded-xl shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 hover:shadow-[7px_7px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition"
-            style={{ padding: '10px 20px', gap: '10px' }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '10px 20px',
+              border: '4px solid black',
+              borderRadius: '999px',
+              backgroundColor: '#E2F0D9',
+              color: '#000',
+              fontWeight: 900,
+              fontSize: '13px',
+              textDecoration: 'none',
+              boxShadow: '4px 4px 0 0 black',
+              flexShrink: 0,
+            }}
           >
-            <span className="text-base leading-none">←</span>
-            <span className="text-sm leading-none">back</span>
+            <span style={{ fontSize: '15px', lineHeight: 1 }}>←</span>
+            <span>back</span>
           </Link>
         </div>
 
-        {/* Tabs */}
+        {/* ===== TABS ===== */}
         <div
-          className="border-4 border-black rounded-2xl shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] flex"
-          style={{ backgroundColor: '#FFFDF5', padding: '6px', gap: '6px' }}
+          style={{
+            display: 'flex',
+            gap: '8px',
+            padding: '6px',
+            border: '4px solid black',
+            borderRadius: '999px',
+            backgroundColor: '#FFFDF5',
+            boxShadow: '5px 5px 0 0 black',
+            flexShrink: 0,
+          }}
         >
           <button
-            onClick={() => setTab('notes')}
-            className="flex-1 border-2 border-black rounded-xl font-black transition"
+            onClick={() => {
+              setTab('notes');
+              setActiveThread(null);
+            }}
             style={{
+              flex: 1,
               padding: '10px',
+              border: '2px solid black',
+              borderRadius: '999px',
+              fontWeight: 900,
               fontSize: '12px',
-              backgroundColor: tab === 'notes' ? '#FFF5BA' : '#FFFDF5',
+              backgroundColor: tab === 'notes' ? '#FFF5BA' : 'transparent',
               color: '#000',
               boxShadow: tab === 'notes' ? '3px 3px 0 0 black' : 'none',
+              cursor: 'pointer',
             }}
           >
             🔒 my notes
           </button>
           <button
             onClick={() => setTab('messages')}
-            className="flex-1 border-2 border-black rounded-xl font-black transition inline-flex items-center justify-center"
             style={{
+              flex: 1,
               padding: '10px',
+              border: '2px solid black',
+              borderRadius: '999px',
+              fontWeight: 900,
               fontSize: '12px',
-              backgroundColor: tab === 'messages' ? '#D4F0F0' : '#FFFDF5',
+              backgroundColor: tab === 'messages' ? '#D4F0F0' : 'transparent',
               color: '#000',
               boxShadow: tab === 'messages' ? '3px 3px 0 0 black' : 'none',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
               gap: '6px',
             }}
           >
             <span>💬 messages</span>
             {totalUnread > 0 && (
               <span
-                className="border-2 border-black"
                 style={{
                   backgroundColor: '#FF8BA7',
                   color: '#000',
                   fontSize: '10px',
-                  padding: '1px 7px',
+                  padding: '2px 8px',
                   borderRadius: '999px',
                   fontWeight: 900,
                   lineHeight: 1.2,
+                  border: '2px solid black',
                 }}
               >
                 {totalUnread}
@@ -428,11 +569,31 @@ export default function VaultPage() {
 
         {/* ============ NOTES TAB ============ */}
         {tab === 'notes' && (
-          <>
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '14px',
+              paddingRight: '4px',
+              WebkitOverflowScrolling: 'touch',
+            }}
+          >
             <form
               onSubmit={saveNote}
-              className="border-4 border-black rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] flex flex-col"
-              style={{ backgroundColor: '#FFF5BA', padding: '16px', gap: '10px' }}
+              style={{
+                border: '4px solid black',
+                borderRadius: '22px',
+                backgroundColor: '#FFF5BA',
+                padding: '16px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+                boxShadow: '6px 6px 0 0 black',
+                flexShrink: 0,
+              }}
             >
               <input
                 type="text"
@@ -441,8 +602,18 @@ export default function VaultPage() {
                 placeholder="title (optional)"
                 maxLength={80}
                 disabled={savingNote}
-                className="w-full border-2 border-black rounded-lg bg-white text-black text-sm focus:outline-none disabled:opacity-50"
-                style={{ padding: '10px 14px' }}
+                style={{
+                  width: '100%',
+                  border: '2px solid black',
+                  borderRadius: '14px',
+                  backgroundColor: 'white',
+                  color: '#000',
+                  fontSize: '14px',
+                  padding: '10px 16px',
+                  outline: 'none',
+                  opacity: savingNote ? 0.5 : 1,
+                  fontWeight: 600,
+                }}
               />
               <textarea
                 value={noteContent}
@@ -450,28 +621,62 @@ export default function VaultPage() {
                 placeholder="write your private note..."
                 rows={4}
                 disabled={savingNote}
-                className="w-full border-2 border-black rounded-lg bg-white text-black text-sm focus:outline-none disabled:opacity-50 resize-none"
-                style={{ padding: '11px 14px', fontFamily: 'inherit' }}
+                style={{
+                  width: '100%',
+                  border: '2px solid black',
+                  borderRadius: '14px',
+                  backgroundColor: 'white',
+                  color: '#000',
+                  fontSize: '14px',
+                  padding: '11px 16px',
+                  outline: 'none',
+                  opacity: savingNote ? 0.5 : 1,
+                  fontFamily: 'inherit',
+                  resize: 'none',
+                }}
               />
               {noteError && (
                 <div
-                  className="border-2 border-black bg-white text-black text-sm font-bold rounded-lg"
-                  style={{ padding: '10px 14px' }}
+                  style={{
+                    border: '2px solid black',
+                    backgroundColor: 'white',
+                    color: '#000',
+                    fontSize: '13px',
+                    fontWeight: 800,
+                    borderRadius: '12px',
+                    padding: '10px 14px',
+                  }}
                 >
                   {noteError}
                 </div>
               )}
-              <div className="flex" style={{ gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '10px' }}>
                 <button
                   type="submit"
                   disabled={savingNote || !noteContent.trim()}
-                  className="flex-1 inline-flex items-center justify-center border-2 border-black bg-[#E2F0D9] text-black text-xs font-black rounded-lg shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition disabled:opacity-50 disabled:hover:translate-y-0"
-                  style={{ padding: '11px 18px', gap: '8px' }}
+                  style={{
+                    flex: 1,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    padding: '11px 18px',
+                    border: '2px solid black',
+                    borderRadius: '999px',
+                    backgroundColor: '#E2F0D9',
+                    color: '#000',
+                    fontWeight: 900,
+                    fontSize: '12px',
+                    boxShadow: '3px 3px 0 0 black',
+                    cursor:
+                      savingNote || !noteContent.trim()
+                        ? 'not-allowed'
+                        : 'pointer',
+                    opacity: savingNote || !noteContent.trim() ? 0.5 : 1,
+                  }}
                 >
-                  <span className="text-sm leading-none">
-                    {savingNote ? '···' : editingNote ? '✓' : '▶'}
-                  </span>
-                  <span className="leading-none tracking-wider">
+                  <span>{savingNote ? '···' : editingNote ? '✓' : '▶'}</span>
+                  <span>
                     {savingNote
                       ? 'SAVING'
                       : editingNote
@@ -484,8 +689,18 @@ export default function VaultPage() {
                     type="button"
                     onClick={cancelNoteEdit}
                     disabled={savingNote}
-                    className="border-2 border-black bg-[#FFD1DC] text-black text-xs font-black rounded-lg shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition disabled:opacity-50"
-                    style={{ padding: '11px 18px' }}
+                    style={{
+                      padding: '11px 18px',
+                      border: '2px solid black',
+                      borderRadius: '999px',
+                      backgroundColor: '#FFD1DC',
+                      color: '#000',
+                      fontWeight: 900,
+                      fontSize: '12px',
+                      boxShadow: '3px 3px 0 0 black',
+                      cursor: savingNote ? 'not-allowed' : 'pointer',
+                      opacity: savingNote ? 0.5 : 1,
+                    }}
                   >
                     cancel
                   </button>
@@ -495,114 +710,165 @@ export default function VaultPage() {
 
             {notes.length === 0 ? (
               <div
-                className="border-4 border-black bg-[#FFFDF5] rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] text-center"
-                style={{ padding: '40px 20px' }}
+                style={{
+                  border: '4px solid black',
+                  backgroundColor: '#FFFDF5',
+                  borderRadius: '22px',
+                  textAlign: 'center',
+                  padding: '40px 20px',
+                  boxShadow: '6px 6px 0 0 black',
+                  flexShrink: 0,
+                }}
               >
-                <p className="text-black font-bold text-sm">
-                  no notes yet — write your first one 🔒
+                <div style={{ fontSize: '36px', marginBottom: '10px' }}>🔒</div>
+                <p style={{ margin: 0, color: '#000', fontWeight: 800, fontSize: '13px' }}>
+                  no notes yet — write your first one
                 </p>
                 <p
-                  className="text-black/50 font-bold"
-                  style={{ fontSize: '11px', marginTop: '8px' }}
+                  style={{
+                    margin: '8px 0 0',
+                    color: 'rgba(0,0,0,0.5)',
+                    fontWeight: 700,
+                    fontSize: '11px',
+                  }}
                 >
                   only you can see these
                 </p>
               </div>
             ) : (
-              <div className="flex flex-col" style={{ gap: '12px' }}>
-                {notes.map((n) => (
-                  <div
-                    key={n.id}
-                    className="border-4 border-black shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] relative"
-                    style={{
-                      backgroundColor: colorFor(n.id),
-                      padding: '16px 18px',
-                    }}
-                  >
-                    {n.title && (
-                      <p
-                        className="font-black truncate"
-                        style={{
-                          color: '#000',
-                          fontSize: '14px',
-                          marginBottom: '6px',
-                          paddingRight: '32px',
-                        }}
-                      >
-                        {n.title}
-                      </p>
-                    )}
+              notes.map((n) => (
+                <div
+                  key={n.id}
+                  style={{
+                    border: '4px solid black',
+                    borderRadius: '22px',
+                    backgroundColor: colorFor(n.id),
+                    padding: '16px 20px',
+                    boxShadow: '5px 5px 0 0 black',
+                    position: 'relative',
+                    flexShrink: 0,
+                  }}
+                >
+                  {n.title && (
                     <p
-                      className="font-bold whitespace-pre-wrap break-words"
                       style={{
-                        color: 'rgba(0,0,0,0.85)',
-                        fontSize: '13px',
-                        lineHeight: 1.5,
+                        margin: '0 0 6px',
+                        fontWeight: 900,
+                        color: '#000',
+                        fontSize: '14px',
                         paddingRight: '32px',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
                       }}
                     >
-                      {n.content}
+                      {n.title}
                     </p>
-                    <div
-                      className="flex items-center justify-between"
-                      style={{ marginTop: '12px' }}
+                  )}
+                  <p
+                    style={{
+                      margin: 0,
+                      fontWeight: 700,
+                      color: 'rgba(0,0,0,0.85)',
+                      fontSize: '13px',
+                      lineHeight: 1.5,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      paddingRight: '32px',
+                    }}
+                  >
+                    {n.content}
+                  </p>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      marginTop: '14px',
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: '9px',
+                        color: 'rgba(0,0,0,0.5)',
+                        fontWeight: 800,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.08em',
+                      }}
                     >
-                      <span
-                        className="font-bold uppercase tracking-wider"
+                      {timeAgo(n.updated_at)}
+                    </span>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button
+                        onClick={() => editNote(n)}
                         style={{
-                          fontSize: '9px',
-                          color: 'rgba(0,0,0,0.5)',
+                          width: '28px',
+                          height: '28px',
+                          border: '2px solid black',
+                          borderRadius: '999px',
+                          backgroundColor: '#FFFDF5',
+                          color: '#000',
+                          fontWeight: 900,
+                          fontSize: '12px',
+                          lineHeight: 1,
+                          boxShadow: '2px 2px 0 0 black',
+                          cursor: 'pointer',
                         }}
+                        aria-label="Edit note"
                       >
-                        {timeAgo(n.updated_at)}
-                      </span>
-                      <div className="flex" style={{ gap: '6px' }}>
-                        <button
-                          onClick={() => editNote(n)}
-                          className="border-2 border-black bg-[#FFFDF5] text-black font-black rounded-full hover:-translate-y-0.5 active:translate-y-0.5 transition"
-                          style={{
-                            width: '26px',
-                            height: '26px',
-                            fontSize: '11px',
-                            lineHeight: 1,
-                            boxShadow: '2px 2px 0 0 black',
-                          }}
-                          aria-label="Edit note"
-                        >
-                          ✎
-                        </button>
-                        <button
-                          onClick={() => deleteNote(n)}
-                          className="border-2 border-black bg-[#FFFDF5] text-black font-black rounded-full hover:-translate-y-0.5 active:translate-y-0.5 transition"
-                          style={{
-                            width: '26px',
-                            height: '26px',
-                            fontSize: '11px',
-                            lineHeight: 1,
-                            boxShadow: '2px 2px 0 0 black',
-                          }}
-                          aria-label="Delete note"
-                        >
-                          ✕
-                        </button>
-                      </div>
+                        ✎
+                      </button>
+                      <button
+                        onClick={() => deleteNote(n)}
+                        style={{
+                          width: '28px',
+                          height: '28px',
+                          border: '2px solid black',
+                          borderRadius: '999px',
+                          backgroundColor: '#FFFDF5',
+                          color: '#000',
+                          fontWeight: 900,
+                          fontSize: '12px',
+                          lineHeight: 1,
+                          boxShadow: '2px 2px 0 0 black',
+                          cursor: 'pointer',
+                        }}
+                        aria-label="Delete note"
+                      >
+                        ✕
+                      </button>
                     </div>
                   </div>
-                ))}
-              </div>
+                </div>
+              ))
             )}
-          </>
+          </div>
         )}
 
-        {/* ============ MESSAGES TAB ============ */}
+        {/* ============ CONTACT LIST (no active thread) ============ */}
         {tab === 'messages' && !activeThread && (
-          <>
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '10px',
+              paddingRight: '4px',
+              WebkitOverflowScrolling: 'touch',
+            }}
+          >
             <p
-              className="font-black uppercase tracking-wider"
               style={{
+                margin: '0 0 4px',
                 fontSize: '11px',
-                color: 'rgba(255,253,245,0.6)',
-                paddingLeft: '4px',
+                fontWeight: 900,
+                color: 'var(--text-secondary, rgba(255,253,245,0.6))',
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em',
+                paddingLeft: '8px',
+                flexShrink: 0,
               }}
             >
               pick someone to dm · private, 1-on-1
@@ -610,215 +876,341 @@ export default function VaultPage() {
 
             {profiles.length === 0 ? (
               <div
-                className="border-4 border-black bg-[#FFFDF5] rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] text-center"
-                style={{ padding: '40px 20px' }}
+                style={{
+                  border: '4px solid black',
+                  backgroundColor: '#FFFDF5',
+                  borderRadius: '22px',
+                  textAlign: 'center',
+                  padding: '40px 20px',
+                  boxShadow: '6px 6px 0 0 black',
+                }}
               >
-                <p className="text-black font-bold text-sm">
+                <p style={{ margin: 0, color: '#000', fontWeight: 800, fontSize: '13px' }}>
                   no other members yet
                 </p>
               </div>
             ) : (
-              <div className="flex flex-col" style={{ gap: '10px' }}>
-                {profiles.map((p, i) => {
-                  const prefix = p.email.split('@')[0];
-                  const initials = prefix.slice(0, 2).toUpperCase();
-                  const colors = ['#E2F0D9', '#FFD1DC', '#E6E6FA'];
-                  const bg = colors[i % colors.length];
-                  const unread = unreadBySender[p.id] ?? 0;
-                  return (
-                    <button
-                      key={p.id}
-                      onClick={() => setActiveThread(p)}
-                      className="border-4 border-black rounded-2xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex items-center hover:-translate-y-0.5 active:translate-y-0.5 transition text-left"
-                      style={{
-                        backgroundColor: '#FFFDF5',
-                        padding: '12px 14px',
-                        gap: '12px',
-                      }}
-                    >
-                      <div className="relative shrink-0">
-                        <div
-                          className="flex items-center justify-center rounded-xl border-4 border-black font-display"
+              profiles.map((p, i) => {
+                const prefix = p.email.split('@')[0];
+                const initials = prefix.slice(0, 2).toUpperCase();
+                const colors = ['#E2F0D9', '#FFD1DC', '#E6E6FA'];
+                const bg = colors[i % colors.length];
+                const unread = unreadBySender[p.id] ?? 0;
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => setActiveThread(p)}
+                    style={{
+                      border: '4px solid black',
+                      borderRadius: '22px',
+                      backgroundColor: '#FFFDF5',
+                      padding: '14px 16px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '14px',
+                      textAlign: 'left',
+                      boxShadow: '4px 4px 0 0 black',
+                      cursor: 'pointer',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <div style={{ position: 'relative', flexShrink: 0 }}>
+                      <div
+                        style={{
+                          width: '48px',
+                          height: '48px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          borderRadius: '999px',
+                          border: '3px solid black',
+                          backgroundColor: bg,
+                          fontWeight: 900,
+                          fontSize: '13px',
+                          color: '#000',
+                        }}
+                      >
+                        {initials}
+                      </div>
+                      {unread > 0 && (
+                        <span
                           style={{
-                            width: '44px',
-                            height: '44px',
-                            fontSize: '11px',
-                            backgroundColor: bg,
+                            position: 'absolute',
+                            top: '-6px',
+                            right: '-6px',
+                            backgroundColor: '#FF8BA7',
                             color: '#000',
-                          }}
-                        >
-                          {initials}
-                        </div>
-                        {unread > 0 && (
-                          <span
-                            className="absolute border-2 border-black font-black"
-                            style={{
-                              top: '-6px',
-                              right: '-6px',
-                              backgroundColor: '#FF8BA7',
-                              color: '#000',
-                              fontSize: '10px',
-                              minWidth: '20px',
-                              height: '20px',
-                              padding: '0 5px',
-                              borderRadius: '999px',
-                              lineHeight: '16px',
-                              textAlign: 'center',
-                              boxShadow: '2px 2px 0 0 black',
-                            }}
-                          >
-                            {unread}
-                          </span>
-                        )}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p
-                          className="font-black truncate"
-                          style={{ fontSize: '14px', color: '#000' }}
-                        >
-                          {prefix}
-                        </p>
-                        <p
-                          className="font-bold"
-                          style={{
                             fontSize: '10px',
-                            color:
-                              unread > 0
-                                ? '#C2185B'
-                                : 'rgba(0,0,0,0.5)',
+                            minWidth: '22px',
+                            height: '22px',
+                            padding: '0 6px',
+                            borderRadius: '999px',
+                            lineHeight: '18px',
+                            textAlign: 'center',
+                            boxShadow: '2px 2px 0 0 black',
+                            border: '2px solid black',
+                            fontWeight: 900,
                           }}
                         >
-                          {unread > 0
-                            ? `${unread} new message${unread > 1 ? 's' : ''}`
-                            : 'tap to open dm'}
-                        </p>
-                      </div>
-                      <span style={{ fontSize: '18px', color: '#000' }}>›</span>
-                    </button>
-                  );
-                })}
-              </div>
+                          {unread}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <p
+                        style={{
+                          margin: 0,
+                          fontWeight: 900,
+                          fontSize: '14px',
+                          color: '#000',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {prefix}
+                      </p>
+                      <p
+                        style={{
+                          margin: '2px 0 0',
+                          fontSize: '10px',
+                          fontWeight: 800,
+                          color: unread > 0 ? '#C2185B' : 'rgba(0,0,0,0.5)',
+                        }}
+                      >
+                        {unread > 0
+                          ? `${unread} new message${unread > 1 ? 's' : ''}`
+                          : 'tap to open dm'}
+                      </p>
+                    </div>
+                    <span style={{ fontSize: '18px', color: '#000' }}>›</span>
+                  </button>
+                );
+              })
             )}
-          </>
+          </div>
         )}
 
         {/* ============ DM THREAD ============ */}
         {tab === 'messages' && activeThread && (
           <>
+            {/* Thread header */}
             <div
-              className="border-4 border-black rounded-2xl shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] flex items-center"
               style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                border: '4px solid black',
+                borderRadius: '22px',
                 backgroundColor: '#FFFDF5',
                 padding: '10px 14px',
-                gap: '12px',
+                boxShadow: '5px 5px 0 0 black',
+                flexShrink: 0,
               }}
             >
               <button
                 onClick={() => setActiveThread(null)}
-                className="border-2 border-black bg-[#FFD1DC] text-black font-black rounded-lg hover:-translate-y-0.5 active:translate-y-0.5 transition shrink-0"
                 style={{
-                  width: '32px',
-                  height: '32px',
-                  fontSize: '14px',
+                  width: '36px',
+                  height: '36px',
+                  border: '2px solid black',
+                  borderRadius: '999px',
+                  backgroundColor: '#FFD1DC',
+                  color: '#000',
+                  fontWeight: 900,
+                  fontSize: '15px',
                   lineHeight: 1,
                   boxShadow: '2px 2px 0 0 black',
+                  cursor: 'pointer',
+                  flexShrink: 0,
                 }}
                 aria-label="Back to list"
               >
                 ‹
               </button>
               <p
-                className="font-black truncate flex-1"
-                style={{ fontSize: '14px', color: '#000' }}
+                style={{
+                  margin: 0,
+                  fontWeight: 900,
+                  fontSize: '15px',
+                  color: '#000',
+                  flex: 1,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
               >
                 {activeThread.email.split('@')[0]}
               </p>
               <span
-                className="font-bold uppercase tracking-wider"
-                style={{ fontSize: '9px', color: 'rgba(0,0,0,0.4)' }}
+                style={{
+                  fontSize: '9px',
+                  color: 'rgba(0,0,0,0.4)',
+                  fontWeight: 900,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.1em',
+                  flexShrink: 0,
+                }}
               >
                 🔒 private
               </span>
             </div>
 
+            {/* DM window */}
             <div
-              className="border-4 border-black rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] flex flex-col"
-              style={{ backgroundColor: '#FFFDF5', minHeight: '400px', maxHeight: '60vh' }}
+              style={{
+                flex: 1,
+                minHeight: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                border: '4px solid black',
+                borderRadius: '28px',
+                backgroundColor: '#FFFDF5',
+                overflow: 'hidden',
+                boxShadow: '8px 8px 0 0 black',
+              }}
             >
               <div
-                className="overflow-y-auto flex-1"
-                style={{ padding: '16px' }}
+                ref={dmScrollRef}
+                onScroll={handleDmScroll}
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  overflowY: 'auto',
+                  padding: '24px 20px 8px',
+                  WebkitOverflowScrolling: 'touch',
+                }}
               >
                 {threadLoading ? (
                   <p
-                    className="text-center font-bold"
-                    style={{ color: 'rgba(0,0,0,0.4)', fontSize: '12px', padding: '20px 0' }}
+                    style={{
+                      textAlign: 'center',
+                      color: 'rgba(0,0,0,0.4)',
+                      fontSize: '12px',
+                      padding: '20px 0',
+                      fontWeight: 700,
+                      margin: 0,
+                    }}
                   >
                     loading...
                   </p>
                 ) : dms.length === 0 ? (
-                  <p
-                    className="text-center font-bold"
-                    style={{ color: 'rgba(0,0,0,0.4)', fontSize: '12px', padding: '20px 0' }}
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      height: '100%',
+                      gap: '10px',
+                    }}
                   >
-                    no messages yet — say hi 👋
-                  </p>
+                    <span style={{ fontSize: '44px' }}>🐱🐶</span>
+                    <p
+                      style={{
+                        margin: 0,
+                        textAlign: 'center',
+                        fontStyle: 'italic',
+                        color: 'rgba(0,0,0,0.5)',
+                        fontSize: '13px',
+                      }}
+                    >
+                      no messages yet — say hi 👋
+                    </p>
+                  </div>
                 ) : (
-                  <div className="flex flex-col" style={{ gap: '8px' }}>
-                    {dms.map((m) => {
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px',
+                    }}
+                  >
+                    {dms.map((m, i) => {
                       const mine = m.sender_id === userId;
+                      const prev = dms[i - 1];
+                      const isNewGroup = !prev || prev.sender_id !== m.sender_id;
                       return (
                         <div
                           key={m.id}
-                          className="flex"
-                          style={{ justifyContent: mine ? 'flex-end' : 'flex-start' }}
+                          className={mine ? 'msg-mine' : 'msg-theirs'}
+                          style={{
+                            display: 'flex',
+                            justifyContent: mine ? 'flex-end' : 'flex-start',
+                            marginTop: isNewGroup && i > 0 ? '16px' : '0',
+                          }}
                         >
                           <div
-                            className="border-2 border-black"
                             style={{
-                              maxWidth: '75%',
-                              padding: '8px 12px',
-                              borderRadius: '14px',
-                              backgroundColor: mine ? '#E2F0D9' : '#D4F0F0',
-                              boxShadow: '2px 2px 0 0 black',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              maxWidth: '78%',
+                              alignItems: mine ? 'flex-end' : 'flex-start',
                             }}
                           >
-                            <p
+                            {isNewGroup && (
+                              <div
+                                className="msg-meta"
+                                style={{
+                                  fontSize: '10px',
+                                  fontWeight: 900,
+                                  textTransform: 'uppercase',
+                                  letterSpacing: '0.1em',
+                                  color: 'rgba(0,0,0,0.4)',
+                                  marginBottom: '7px',
+                                  paddingLeft: '8px',
+                                  paddingRight: '8px',
+                                }}
+                              >
+                                {mine ? 'you' : 'them'} ·{' '}
+                                {formatTime(m.created_at, timeFormat)}
+                              </div>
+                            )}
+                            <div
                               style={{
-                                color: '#000',
-                                fontSize: '13px',
-                                lineHeight: 1.4,
-                                wordBreak: 'break-word',
-                                whiteSpace: 'pre-wrap',
-                                margin: 0,
+                                border: '2px solid black',
+                                borderRadius: mine
+                                  ? '24px 24px 6px 24px'
+                                  : '24px 24px 24px 6px',
+                                padding: '10px 16px',
+                                backgroundColor: mine ? '#E2F0D9' : '#D4F0F0',
+                                boxShadow: '2px 2px 0 0 black',
                               }}
                             >
-                              {m.content}
-                            </p>
-                            <p
-                              style={{
-                                color: 'rgba(0,0,0,0.4)',
-                                fontSize: '9px',
-                                margin: '4px 0 0',
-                                fontWeight: 700,
-                                textAlign: mine ? 'right' : 'left',
-                              }}
-                            >
-                              {formatTime(m.created_at, timeFormat)}
-                            </p>
+                              <p
+                                style={{
+                                  margin: 0,
+                                  color: '#000',
+                                  fontSize: '13.5px',
+                                  lineHeight: 1.45,
+                                  wordBreak: 'break-word',
+                                  whiteSpace: 'pre-wrap',
+                                }}
+                              >
+                                {m.content}
+                              </p>
+                            </div>
                           </div>
                         </div>
                       );
                     })}
-                    <div ref={dmBottomRef} />
+                    <div ref={dmBottomRef} style={{ height: '4px' }} />
                   </div>
                 )}
               </div>
 
+              {/* DM input */}
               <form
                 onSubmit={sendDm}
-                className="border-t-4 border-black flex items-stretch shrink-0"
-                style={{ backgroundColor: '#E6E6FA', padding: '10px', gap: '8px' }}
+                style={{
+                  flexShrink: 0,
+                  borderTop: '4px solid black',
+                  backgroundColor: '#E6E6FA',
+                  display: 'flex',
+                  alignItems: 'stretch',
+                  padding: '12px',
+                  gap: '10px',
+                }}
               >
                 <input
                   type="text"
@@ -826,20 +1218,50 @@ export default function VaultPage() {
                   onChange={(e) => setDmInput(e.target.value)}
                   placeholder="type a private message..."
                   disabled={sendingDm}
-                  className="flex-1 min-w-0 border-2 border-black rounded-lg bg-white text-black text-sm focus:outline-none disabled:opacity-50"
-                  style={{ padding: '10px 14px' }}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    border: '3px solid black',
+                    borderRadius: '999px',
+                    backgroundColor: 'white',
+                    color: '#000',
+                    fontSize: '14px',
+                    padding: '11px 20px',
+                    outline: 'none',
+                    opacity: sendingDm ? 0.5 : 1,
+                    fontWeight: 600,
+                  }}
                 />
                 <button
                   type="submit"
                   disabled={sendingDm || !dmInput.trim()}
-                  className="inline-flex items-center border-2 border-black bg-[#E2F0D9] text-black text-xs font-black rounded-lg shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition disabled:opacity-50 disabled:hover:translate-y-0 shrink-0"
-                  style={{ padding: '10px 16px', gap: '6px' }}
+                  className="group"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '7px',
+                    padding: '11px 20px',
+                    border: '3px solid black',
+                    borderRadius: '999px',
+                    backgroundColor: '#E2F0D9',
+                    color: '#000',
+                    fontWeight: 900,
+                    fontSize: '12px',
+                    boxShadow: '3px 3px 0 0 black',
+                    cursor:
+                      sendingDm || !dmInput.trim() ? 'not-allowed' : 'pointer',
+                    opacity: sendingDm || !dmInput.trim() ? 0.5 : 1,
+                    flexShrink: 0,
+                  }}
                 >
-                  <span className="text-sm leading-none">
-                    {sendingDm ? '···' : '▶'}
+                  <span
+                    className="animate-purr"
+                    style={{ fontSize: '17px', lineHeight: 1 }}
+                  >
+                    🐱
                   </span>
-                  <span className="leading-none tracking-wider">
-                    {sendingDm ? 'SENDING' : 'SEND'}
+                  <span style={{ letterSpacing: '0.06em' }}>
+                    {sendingDm ? '...' : 'SEND'}
                   </span>
                 </button>
               </form>
