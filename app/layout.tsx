@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { ThemeProvider } from '@/lib/use-theme';
+import { SWRegistrar } from '@/components/sw-registrar';
 import { Analytics } from '@vercel/analytics/next';
 import type { Metadata, Viewport } from 'next';
 import { Press_Start_2P, Baloo_2 } from 'next/font/google';
@@ -62,6 +63,7 @@ export default function RootLayout({
       className={`${pixel.variable} ${rounded.variable} bg-background`}
     >
       <body className="font-sans antialiased">
+        <SWRegistrar />
         <ThemeProvider>
           {children}
         </ThemeProvider>
