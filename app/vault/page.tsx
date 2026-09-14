@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { useProfile } from '@/lib/use-profile';
+import { BgPickerButton, getBgStyle, MessageBg } from '@/components/message-bg';
 
 type Note = {
   id: string;
@@ -23,6 +25,8 @@ type DM = {
   content: string;
   created_at: string;
   read_at: string | null;
+  reply_to_id: string | null;
+  edited_at: string | null;
 };
 
 type Profile = {
@@ -30,12 +34,17 @@ type Profile = {
   email: string;
 };
 
+type ContextMenu = {
+  message: DM;
+  x: number;
+  y: number;
+} | null;
+
 const NOTE_COLORS = ['#FFF5BA', '#FFD1DC', '#E2F0D9', '#E6E6FA', '#D4F0F0'];
 
 function colorFor(id: string): string {
   let hash = 0;
-  for (let i = 0; i < id.length; i++)
-    hash = (hash * 17 + id.charCodeAt(i)) | 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 17 + id.charCodeAt(i)) | 0;
   return NOTE_COLORS[Math.abs(hash) % NOTE_COLORS.length];
 }
 
@@ -48,10 +57,7 @@ function timeAgo(iso: string): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   if (d < 7) return `${d}d ago`;
-  return new Date(iso).toLocaleDateString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-  });
+  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 }
 
 function formatTime(iso: string, timeFormat: string = '12h'): string {
@@ -62,11 +68,19 @@ function formatTime(iso: string, timeFormat: string = '12h'): string {
   });
 }
 
-export default function VaultPage() {
+function VaultContent() {
+  const searchParams = useSearchParams();
+  const threadParam = searchParams.get('thread');
+
   const { profile } = useProfile();
   const timeFormat = profile?.time_format ?? '12h';
+  const vaultBg: MessageBg = (((profile as any)?.vault_bg) ?? 'plain') as MessageBg;
 
-  const [tab, setTab] = useState<'notes' | 'messages'>('notes');
+  const [tab, setTab] = useState<'notes' | 'messages'>(
+    threadParam ? 'messages' : 'notes'
+  );
+  const [pendingThreadId, setPendingThreadId] = useState<string | null>(threadParam);
+
   const [userId, setUserId] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -87,10 +101,28 @@ export default function VaultPage() {
   const [sendingDm, setSendingDm] = useState(false);
   const [threadLoading, setThreadLoading] = useState(false);
   const [unreadBySender, setUnreadBySender] = useState<Record<string, number>>({});
+
+  // Reply + edit state
+  const [replyTo, setReplyTo] = useState<DM | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
+
+  // Context menu
+  const [contextMenu, setContextMenu] = useState<ContextMenu>(null);
+  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
+
   const dmBottomRef = useRef<HTMLDivElement>(null);
   const dmScrollRef = useRef<HTMLDivElement>(null);
   const dmAtBottomRef = useRef(true);
   const dmInitialLoadDone = useRef(false);
+
+  // React to URL param changes
+  useEffect(() => {
+    if (threadParam) {
+      setPendingThreadId(threadParam);
+      setTab('messages');
+    }
+  }, [threadParam]);
 
   // Auth
   useEffect(() => {
@@ -128,7 +160,7 @@ export default function VaultPage() {
       });
   }, [userId]);
 
-  // Profiles + unread counts
+  // Profiles + unread + deep-link
   useEffect(() => {
     if (!userId) return;
     Promise.all([
@@ -143,8 +175,18 @@ export default function VaultPage() {
         .eq('recipient_id', userId)
         .is('read_at', null),
     ]).then(([profilesRes, unreadRes]) => {
+      const loaded = (profilesRes.data ?? []) as Profile[];
       if (profilesRes.error) console.error(profilesRes.error);
-      else setProfiles(profilesRes.data ?? []);
+      else setProfiles(loaded);
+
+      if (pendingThreadId && loaded.length > 0) {
+        const found = loaded.find((p) => p.id === pendingThreadId);
+        if (found) {
+          setActiveThread(found);
+          setTab('messages');
+        }
+        setPendingThreadId(null);
+      }
 
       if (unreadRes.error) console.error(unreadRes.error);
       else {
@@ -155,9 +197,9 @@ export default function VaultPage() {
         setUnreadBySender(counts);
       }
     });
-  }, [userId]);
+  }, [userId, pendingThreadId]);
 
-  // Load DMs for thread
+  // Load DMs
   useEffect(() => {
     if (!userId || !activeThread) {
       setDms([]);
@@ -190,9 +232,8 @@ export default function VaultPage() {
           .eq('sender_id', activeThread.id)
           .is('read_at', null)
           .select()
-          .then(({ data, error }) => {
-            if (error) console.error('❌ Mark read failed:', error);
-            else console.log(`✓ Marked ${data?.length ?? 0} DM(s) as read`);
+          .then(({ error }) => {
+            if (error) console.error('Mark read failed:', error);
           });
 
         setUnreadBySender((prev) => {
@@ -203,7 +244,7 @@ export default function VaultPage() {
       });
   }, [userId, activeThread]);
 
-  // Realtime
+  // Realtime — insert + update + delete
   useEffect(() => {
     if (!userId) return;
     const channel = supabase
@@ -243,6 +284,23 @@ export default function VaultPage() {
           }
         }
       )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'vault_dms' },
+        (payload) => {
+          const updated = payload.new as DM;
+          if (updated.sender_id !== userId && updated.recipient_id !== userId) return;
+          setDms((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'vault_dms' },
+        (payload) => {
+          const removed = payload.old as { id: string };
+          setDms((prev) => prev.filter((m) => m.id !== removed.id));
+        }
+      )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
@@ -252,8 +310,7 @@ export default function VaultPage() {
   function handleDmScroll() {
     const el = dmScrollRef.current;
     if (!el) return;
-    dmAtBottomRef.current =
-      el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    dmAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   }
 
   // Notes actions
@@ -318,7 +375,7 @@ export default function VaultPage() {
     if (!error) setNotes((prev) => prev.filter((x) => x.id !== n.id));
   }
 
-  // DM action
+  // DM: send
   async function sendDm(e: React.FormEvent) {
     e.preventDefault();
     const text = dmInput.trim();
@@ -326,8 +383,9 @@ export default function VaultPage() {
     setSendingDm(true);
     setDmInput('');
 
+    const tempId = `temp-${Date.now()}`;
     const optimistic: DM = {
-      id: `temp-${Date.now()}`,
+      id: tempId,
       sender_id: userId,
       sender_email: email,
       recipient_id: activeThread.id,
@@ -335,9 +393,12 @@ export default function VaultPage() {
       content: text,
       created_at: new Date().toISOString(),
       read_at: null,
+      reply_to_id: replyTo?.id ?? null,
+      edited_at: null,
     };
     setDms((prev) => [...prev, optimistic]);
     dmAtBottomRef.current = true;
+    setReplyTo(null);
     setTimeout(() => {
       dmBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, 60);
@@ -350,21 +411,131 @@ export default function VaultPage() {
         recipient_id: activeThread.id,
         recipient_email: activeThread.email,
         content: text,
+        reply_to_id: optimistic.reply_to_id,
       })
       .select()
       .single();
 
     if (error) {
       console.error(error);
-      setDms((prev) => prev.filter((m) => m.id !== optimistic.id));
+      setDms((prev) => prev.filter((m) => m.id !== tempId));
       setDmInput(text);
       alert('⚠️ Failed to send: ' + error.message);
     } else if (data) {
-      setDms((prev) =>
-        prev.map((m) => (m.id === optimistic.id ? (data as DM) : m))
-      );
+      setDms((prev) => prev.map((m) => (m.id === tempId ? (data as DM) : m)));
     }
     setSendingDm(false);
+  }
+
+  // DM: edit
+  async function saveEdit(messageId: string) {
+    const text = editText.trim();
+    if (!text) {
+      setEditingId(null);
+      setEditText('');
+      return;
+    }
+    setDms((prev) =>
+      prev.map((m) =>
+        m.id === messageId
+          ? { ...m, content: text, edited_at: new Date().toISOString() }
+          : m
+      )
+    );
+    setEditingId(null);
+    setEditText('');
+
+    const { error } = await supabase
+      .from('vault_dms')
+      .update({ content: text, edited_at: new Date().toISOString() })
+      .eq('id', messageId);
+    if (error) {
+      console.error(error);
+      alert('⚠️ Failed to edit: ' + error.message);
+    }
+  }
+
+  // DM: delete
+  async function deleteMessage(messageId: string) {
+    if (!confirm('Delete this message?')) return;
+    const backup = dms;
+    setDms((prev) => prev.filter((m) => m.id !== messageId));
+
+    const { error } = await supabase.from('vault_dms').delete().eq('id', messageId);
+    if (error) {
+      console.error(error);
+      setDms(backup);
+      alert('⚠️ Failed to delete: ' + error.message);
+    }
+  }
+
+  // BG save
+  async function handleBgChange(bg: MessageBg) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    await supabase.from('profiles').update({ vault_bg: bg }).eq('id', user.id);
+  }
+
+  // Context menu
+  function openContextMenu(message: DM, x: number, y: number) {
+    const menuWidth = 180;
+    const menuHeight = 180;
+    const safeX = Math.min(x, window.innerWidth - menuWidth - 8);
+    const safeY = Math.min(y, window.innerHeight - menuHeight - 8);
+    setContextMenu({ message, x: safeX, y: safeY });
+  }
+
+  function handleRightClick(e: React.MouseEvent, message: DM) {
+    e.preventDefault();
+    openContextMenu(message, e.clientX, e.clientY);
+  }
+
+  function handleTouchStart(e: React.TouchEvent, message: DM) {
+    const touch = e.touches[0];
+    const x = touch.clientX;
+    const y = touch.clientY;
+    longPressTimer.current = setTimeout(() => {
+      openContextMenu(message, x, y);
+    }, 500);
+  }
+
+  function handleTouchEnd() {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }
+
+  function closeContextMenu() {
+    setContextMenu(null);
+  }
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') closeContextMenu();
+    }
+    function onClick() {
+      closeContextMenu();
+    }
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('click', onClick);
+    window.addEventListener('scroll', onClick, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('click', onClick);
+      window.removeEventListener('scroll', onClick, true);
+    };
+  }, [contextMenu]);
+
+  function findDmById(id: string | null): DM | null {
+    if (!id) return null;
+    return dms.find((m) => m.id === id) ?? null;
+  }
+
+  function previewOf(text: string, max = 60): string {
+    const t = text.trim();
+    return t.length > max ? t.slice(0, max) + '…' : t;
   }
 
   if (loading) {
@@ -414,7 +585,7 @@ export default function VaultPage() {
           minHeight: 0,
         }}
       >
-        {/* ===== HEADER ===== */}
+        {/* HEADER */}
         <div
           style={{
             display: 'flex',
@@ -495,7 +666,7 @@ export default function VaultPage() {
           </Link>
         </div>
 
-        {/* ===== TABS ===== */}
+        {/* TABS */}
         <div
           style={{
             display: 'flex',
@@ -567,7 +738,7 @@ export default function VaultPage() {
           </button>
         </div>
 
-        {/* ============ NOTES TAB ============ */}
+        {/* NOTES TAB */}
         {tab === 'notes' && (
           <div
             style={{
@@ -669,9 +840,7 @@ export default function VaultPage() {
                     fontSize: '12px',
                     boxShadow: '3px 3px 0 0 black',
                     cursor:
-                      savingNote || !noteContent.trim()
-                        ? 'not-allowed'
-                        : 'pointer',
+                      savingNote || !noteContent.trim() ? 'not-allowed' : 'pointer',
                     opacity: savingNote || !noteContent.trim() ? 0.5 : 1,
                   }}
                 >
@@ -845,7 +1014,7 @@ export default function VaultPage() {
           </div>
         )}
 
-        {/* ============ CONTACT LIST (no active thread) ============ */}
+        {/* CONTACT LIST */}
         {tab === 'messages' && !activeThread && (
           <div
             style={{
@@ -991,10 +1160,9 @@ export default function VaultPage() {
           </div>
         )}
 
-        {/* ============ DM THREAD ============ */}
+        {/* DM THREAD */}
         {tab === 'messages' && activeThread && (
           <>
-            {/* Thread header */}
             <div
               style={{
                 display: 'flex',
@@ -1028,6 +1196,7 @@ export default function VaultPage() {
               >
                 ‹
               </button>
+              <BgPickerButton current={vaultBg} onChange={handleBgChange} />
               <p
                 style={{
                   margin: 0,
@@ -1056,7 +1225,6 @@ export default function VaultPage() {
               </span>
             </div>
 
-            {/* DM window */}
             <div
               style={{
                 flex: 1,
@@ -1070,6 +1238,7 @@ export default function VaultPage() {
                 boxShadow: '8px 8px 0 0 black',
               }}
             >
+              {/* DM scroll area — bg applied here */}
               <div
                 ref={dmScrollRef}
                 onScroll={handleDmScroll}
@@ -1079,6 +1248,7 @@ export default function VaultPage() {
                   overflowY: 'auto',
                   padding: '24px 20px 8px',
                   WebkitOverflowScrolling: 'touch',
+                  ...getBgStyle(vaultBg),
                 }}
               >
                 {threadLoading ? (
@@ -1119,17 +1289,14 @@ export default function VaultPage() {
                     </p>
                   </div>
                 ) : (
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '4px',
-                    }}
-                  >
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     {dms.map((m, i) => {
                       const mine = m.sender_id === userId;
                       const prev = dms[i - 1];
                       const isNewGroup = !prev || prev.sender_id !== m.sender_id;
+                      const isEditing = editingId === m.id;
+                      const repliedTo = findDmById(m.reply_to_id);
+
                       return (
                         <div
                           key={m.id}
@@ -1167,6 +1334,10 @@ export default function VaultPage() {
                               </div>
                             )}
                             <div
+                              onContextMenu={(e) => handleRightClick(e, m)}
+                              onTouchStart={(e) => handleTouchStart(e, m)}
+                              onTouchEnd={handleTouchEnd}
+                              onTouchMove={handleTouchEnd}
                               style={{
                                 border: '2px solid black',
                                 borderRadius: mine
@@ -1175,20 +1346,149 @@ export default function VaultPage() {
                                 padding: '10px 16px',
                                 backgroundColor: mine ? '#E2F0D9' : '#D4F0F0',
                                 boxShadow: '2px 2px 0 0 black',
+                                cursor: 'pointer',
+                                userSelect: 'none',
+                                minWidth: '80px',
                               }}
                             >
-                              <p
-                                style={{
-                                  margin: 0,
-                                  color: '#000',
-                                  fontSize: '13.5px',
-                                  lineHeight: 1.45,
-                                  wordBreak: 'break-word',
-                                  whiteSpace: 'pre-wrap',
-                                }}
-                              >
-                                {m.content}
-                              </p>
+                              {repliedTo && (
+                                <div
+                                  style={{
+                                    borderLeft: '4px solid black',
+                                    backgroundColor: 'rgba(0,0,0,0.08)',
+                                    borderRadius: '8px',
+                                    padding: '5px 8px',
+                                    marginBottom: '6px',
+                                  }}
+                                >
+                                  <p
+                                    style={{
+                                      fontSize: '9px',
+                                      fontWeight: 900,
+                                      textTransform: 'uppercase',
+                                      letterSpacing: '0.06em',
+                                      color: 'rgba(0,0,0,0.5)',
+                                      margin: 0,
+                                    }}
+                                  >
+                                    {repliedTo.sender_id === userId
+                                      ? 'you'
+                                      : repliedTo.sender_email.split('@')[0]}
+                                  </p>
+                                  <p
+                                    style={{
+                                      fontSize: '11px',
+                                      fontWeight: 700,
+                                      color: 'rgba(0,0,0,0.7)',
+                                      margin: '2px 0 0',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    {previewOf(repliedTo.content, 40)}
+                                  </p>
+                                </div>
+                              )}
+
+                              {isEditing ? (
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '6px',
+                                    minWidth: '180px',
+                                  }}
+                                >
+                                  <textarea
+                                    value={editText}
+                                    onChange={(e) => setEditText(e.target.value)}
+                                    autoFocus
+                                    rows={2}
+                                    style={{
+                                      border: '2px solid black',
+                                      borderRadius: '8px',
+                                      padding: '6px 10px',
+                                      fontSize: '13.5px',
+                                      fontFamily: 'inherit',
+                                      resize: 'none',
+                                      outline: 'none',
+                                      backgroundColor: 'white',
+                                      color: '#000',
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' && !e.shiftKey) {
+                                        e.preventDefault();
+                                        saveEdit(m.id);
+                                      }
+                                      if (e.key === 'Escape') {
+                                        setEditingId(null);
+                                        setEditText('');
+                                      }
+                                    }}
+                                  />
+                                  <div style={{ display: 'flex', gap: '6px' }}>
+                                    <button
+                                      onClick={() => saveEdit(m.id)}
+                                      style={{
+                                        padding: '4px 12px',
+                                        fontSize: '11px',
+                                        border: '2px solid black',
+                                        borderRadius: '8px',
+                                        backgroundColor: '#E2F0D9',
+                                        color: '#000',
+                                        fontWeight: 900,
+                                        cursor: 'pointer',
+                                      }}
+                                    >
+                                      save
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setEditingId(null);
+                                        setEditText('');
+                                      }}
+                                      style={{
+                                        padding: '4px 12px',
+                                        fontSize: '11px',
+                                        border: '2px solid black',
+                                        borderRadius: '8px',
+                                        backgroundColor: '#FFD1DC',
+                                        color: '#000',
+                                        fontWeight: 900,
+                                        cursor: 'pointer',
+                                      }}
+                                    >
+                                      cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <p
+                                  style={{
+                                    margin: 0,
+                                    color: '#000',
+                                    fontSize: '13.5px',
+                                    lineHeight: 1.45,
+                                    wordBreak: 'break-word',
+                                    whiteSpace: 'pre-wrap',
+                                  }}
+                                >
+                                  {m.content}
+                                  {m.edited_at && (
+                                    <span
+                                      style={{
+                                        fontSize: '9px',
+                                        color: 'rgba(0,0,0,0.4)',
+                                        marginLeft: '6px',
+                                        fontWeight: 700,
+                                      }}
+                                    >
+                                      (edited)
+                                    </span>
+                                  )}
+                                </p>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -1199,7 +1499,71 @@ export default function VaultPage() {
                 )}
               </div>
 
-              {/* DM input */}
+              {/* Reply preview bar */}
+              {replyTo && (
+                <div
+                  style={{
+                    borderTop: '4px solid black',
+                    backgroundColor: '#FFF5BA',
+                    padding: '8px 12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    flexShrink: 0,
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: '10px',
+                        fontWeight: 900,
+                        color: '#000',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.06em',
+                      }}
+                    >
+                      replying to{' '}
+                      {replyTo.sender_id === userId
+                        ? 'yourself'
+                        : replyTo.sender_email.split('@')[0]}
+                    </p>
+                    <p
+                      style={{
+                        margin: '3px 0 0',
+                        fontSize: '12px',
+                        color: 'rgba(0,0,0,0.6)',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {previewOf(replyTo.content, 60)}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setReplyTo(null)}
+                    style={{
+                      width: '28px',
+                      height: '28px',
+                      border: '2px solid black',
+                      borderRadius: '8px',
+                      backgroundColor: '#FFD1DC',
+                      color: '#000',
+                      fontWeight: 900,
+                      fontSize: '13px',
+                      lineHeight: 1,
+                      cursor: 'pointer',
+                      flexShrink: 0,
+                    }}
+                    aria-label="Cancel reply"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+
+              {/* Input */}
               <form
                 onSubmit={sendDm}
                 style={{
@@ -1269,6 +1633,139 @@ export default function VaultPage() {
           </>
         )}
       </div>
+
+      {/* CONTEXT MENU */}
+      {contextMenu && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'fixed',
+            top: contextMenu.y,
+            left: contextMenu.x,
+            zIndex: 500,
+            backgroundColor: '#FFFDF5',
+            border: '3px solid black',
+            borderRadius: '14px',
+            boxShadow: '5px 5px 0 0 black',
+            padding: '6px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '2px',
+            minWidth: '160px',
+          }}
+        >
+          <button
+            onClick={() => {
+              setReplyTo(contextMenu.message);
+              closeContextMenu();
+            }}
+            style={{
+              padding: '8px 12px',
+              fontSize: '12px',
+              color: '#000',
+              border: 'none',
+              background: 'transparent',
+              textAlign: 'left',
+              fontWeight: 900,
+              cursor: 'pointer',
+              borderRadius: '8px',
+            }}
+          >
+            ↩️ reply
+          </button>
+
+          {contextMenu.message.sender_id === userId && (
+            <>
+              <button
+                onClick={() => {
+                  setEditingId(contextMenu.message.id);
+                  setEditText(contextMenu.message.content);
+                  closeContextMenu();
+                }}
+                style={{
+                  padding: '8px 12px',
+                  fontSize: '12px',
+                  color: '#000',
+                  border: 'none',
+                  background: 'transparent',
+                  textAlign: 'left',
+                  fontWeight: 900,
+                  cursor: 'pointer',
+                  borderRadius: '8px',
+                }}
+              >
+                ✎ edit
+              </button>
+              <button
+                onClick={() => {
+                  const id = contextMenu.message.id;
+                  closeContextMenu();
+                  deleteMessage(id);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  fontSize: '12px',
+                  color: '#C2185B',
+                  border: 'none',
+                  background: 'transparent',
+                  textAlign: 'left',
+                  fontWeight: 900,
+                  cursor: 'pointer',
+                  borderRadius: '8px',
+                }}
+              >
+                ✕ delete
+              </button>
+            </>
+          )}
+
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(contextMenu.message.content).catch(() => {});
+              closeContextMenu();
+            }}
+            style={{
+              padding: '8px 12px',
+              fontSize: '12px',
+              color: '#000',
+              border: 'none',
+              background: 'transparent',
+              textAlign: 'left',
+              fontWeight: 900,
+              cursor: 'pointer',
+              borderRadius: '8px',
+            }}
+          >
+            📋 copy
+          </button>
+        </div>
+      )}
     </div>
+  );
+}
+
+export default function VaultPage() {
+  return (
+    <Suspense
+      fallback={
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'var(--bg-app, #1a0b2e)',
+            color: 'var(--text-primary, #FFFDF5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontFamily: 'ui-monospace, monospace',
+            fontWeight: 800,
+          }}
+        >
+          loading...
+        </div>
+      }
+    >
+      <VaultContent />
+    </Suspense>
   );
 }

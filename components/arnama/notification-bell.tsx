@@ -1,10 +1,11 @@
 'use client';
-import { playDing } from '@/lib/ding';
+
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Bell } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useProfile } from '@/lib/use-profile';
+import { playDing } from '@/lib/ding';
 
 type Notif = {
   id: string;
@@ -31,7 +32,6 @@ function timeAgo(iso: string): string {
   });
 }
 
-
 export function NotificationBell() {
   const router = useRouter();
   const { profile } = useProfile();
@@ -43,7 +43,6 @@ export function NotificationBell() {
   const [isMobile, setIsMobile] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Mutable ref so realtime callbacks always see latest settings
   const settingsRef = useRef({
     notify_chat: true,
     notify_tunes: true,
@@ -55,7 +54,6 @@ export function NotificationBell() {
     sound_enabled: true,
   });
 
-  // Keep ref in sync (for realtime callbacks)
   useEffect(() => {
     if (!profile) return;
     settingsRef.current = {
@@ -70,8 +68,6 @@ export function NotificationBell() {
     };
   }, [profile]);
 
-  // IMPORTANT: derive settings from profile state directly for the FILTER.
-  // This means the filter recomputes whenever profile changes (re-render).
   const liveSettings = useMemo(
     () => ({
       notify_chat: profile?.notify_chat ?? true,
@@ -86,7 +82,6 @@ export function NotificationBell() {
     [profile]
   );
 
-  // Mobile detection
   useEffect(() => {
     function check() {
       setIsMobile(window.innerWidth < 640);
@@ -122,7 +117,8 @@ export function NotificationBell() {
           supabase.from('wishes').select('id, user_email, content, created_at').neq('user_email', myEmail).order('created_at', { ascending: false }).limit(5),
           supabase.from('photos').select('id, user_email, caption, created_at').neq('user_email', myEmail).order('created_at', { ascending: false }).limit(5),
           supabase.from('plans').select('id, user_email, title, event_date, created_at').neq('user_email', myEmail).order('created_at', { ascending: false }).limit(5),
-          supabase.from('vault_dms').select('id, sender_email, content, created_at, read_at').eq('recipient_id', user.id).order('created_at', { ascending: false }).limit(5),
+          // ⬇️ ADDED sender_id to the select
+          supabase.from('vault_dms').select('id, sender_id, sender_email, content, created_at, read_at').eq('recipient_id', user.id).order('created_at', { ascending: false }).limit(5),
           supabase.from('tunes').select('id, user_email, title, created_at').neq('user_email', myEmail).order('created_at', { ascending: false }).limit(5),
           supabase.from('arcade_ttt').select('id, player_x_email, created_at').eq('status', 'waiting').neq('player_x_id', user.id).order('created_at', { ascending: false }).limit(3),
         ]);
@@ -148,10 +144,19 @@ export function NotificationBell() {
         const sender = p.user_email.split('@')[0];
         notifs.push({ id: `plan-${p.id}`, kind: 'plan', text: `${sender} planned "${p.title}"`, href: '/plans', at: p.created_at, color: '#FFF5BA', emoji: '📅' });
       });
+      // ⬇️ FIXED: DM href now points to specific thread
       (dms.data ?? []).forEach((d: any) => {
         const sender = d.sender_email.split('@')[0];
         const preview = d.content.length > 40 ? d.content.slice(0, 40) + '…' : d.content;
-        notifs.push({ id: `dm-${d.id}`, kind: 'dm', text: `${sender} sent you: ${preview}`, href: '/vault', at: d.created_at, color: '#D4F0F0', emoji: '🔒' });
+        notifs.push({
+          id: `dm-${d.id}`,
+          kind: 'dm',
+          text: `${sender} sent you: ${preview}`,
+          href: `/vault?thread=${d.sender_id}`,
+          at: d.created_at,
+          color: '#D4F0F0',
+          emoji: '🔒',
+        });
       });
       (tunes.data ?? []).forEach((t: any) => {
         const sender = t.user_email.split('@')[0];
@@ -236,12 +241,21 @@ export function NotificationBell() {
         tryPush({ id: `plan-${p.id}`, kind: 'plan', text: `${sender} planned "${p.title}"`, href: '/plans', at: p.created_at, color: '#FFF5BA', emoji: '📅' });
       });
 
+      // ⬇️ FIXED: DM realtime handler also points to specific thread
       ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vault_dms' }, (payload) => {
         const d = payload.new as any;
         if (d.recipient_id !== user.id) return;
         const sender = d.sender_email.split('@')[0];
         const preview = d.content.length > 40 ? d.content.slice(0, 40) + '…' : d.content;
-        tryPush({ id: `dm-${d.id}`, kind: 'dm', text: `${sender} sent you: ${preview}`, href: '/vault', at: d.created_at, color: '#D4F0F0', emoji: '🔒' });
+        tryPush({
+          id: `dm-${d.id}`,
+          kind: 'dm',
+          text: `${sender} sent you: ${preview}`,
+          href: `/vault?thread=${d.sender_id}`,
+          at: d.created_at,
+          color: '#D4F0F0',
+          emoji: '🔒',
+        });
       });
 
       ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tunes' }, (payload) => {
@@ -269,7 +283,6 @@ export function NotificationBell() {
     };
   }, [userId]);
 
-  // Filter using LIVE settings from profile (recomputed on profile change)
   const visibleItems = items.filter((n) => {
     if (n.kind === 'chat') return liveSettings.notify_chat;
     if (n.kind === 'wish') return liveSettings.notify_wishes;
@@ -422,9 +435,7 @@ export function NotificationBell() {
                   className="font-bold"
                   style={{ fontSize: '10px', color: 'rgba(0,0,0,0.5)', marginTop: '4px' }}
                 >
-                  {items.length > 0
-                    ? 'muted — check settings'
-                    : 'no activity yet'}
+                  {items.length > 0 ? 'muted — check settings' : 'no activity yet'}
                 </p>
               </div>
             ) : (
