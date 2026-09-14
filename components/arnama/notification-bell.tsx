@@ -117,7 +117,6 @@ export function NotificationBell() {
           supabase.from('wishes').select('id, user_email, content, created_at').neq('user_email', myEmail).order('created_at', { ascending: false }).limit(5),
           supabase.from('photos').select('id, user_email, caption, created_at').neq('user_email', myEmail).order('created_at', { ascending: false }).limit(5),
           supabase.from('plans').select('id, user_email, title, event_date, created_at').neq('user_email', myEmail).order('created_at', { ascending: false }).limit(5),
-          // ⬇️ ADDED sender_id to the select
           supabase.from('vault_dms').select('id, sender_id, sender_email, content, created_at, read_at').eq('recipient_id', user.id).order('created_at', { ascending: false }).limit(5),
           supabase.from('tunes').select('id, user_email, title, created_at').neq('user_email', myEmail).order('created_at', { ascending: false }).limit(5),
           supabase.from('arcade_ttt').select('id, player_x_email, created_at').eq('status', 'waiting').neq('player_x_id', user.id).order('created_at', { ascending: false }).limit(3),
@@ -144,7 +143,6 @@ export function NotificationBell() {
         const sender = p.user_email.split('@')[0];
         notifs.push({ id: `plan-${p.id}`, kind: 'plan', text: `${sender} planned "${p.title}"`, href: '/plans', at: p.created_at, color: '#FFF5BA', emoji: '📅' });
       });
-      // ⬇️ FIXED: DM href now points to specific thread
       (dms.data ?? []).forEach((d: any) => {
         const sender = d.sender_email.split('@')[0];
         const preview = d.content.length > 40 ? d.content.slice(0, 40) + '…' : d.content;
@@ -241,7 +239,6 @@ export function NotificationBell() {
         tryPush({ id: `plan-${p.id}`, kind: 'plan', text: `${sender} planned "${p.title}"`, href: '/plans', at: p.created_at, color: '#FFF5BA', emoji: '📅' });
       });
 
-      // ⬇️ FIXED: DM realtime handler also points to specific thread
       ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vault_dms' }, (payload) => {
         const d = payload.new as any;
         if (d.recipient_id !== user.id) return;
@@ -328,36 +325,37 @@ export function NotificationBell() {
     router.push(href);
   }
 
+  // GLASS: translucent pastel + blur
+  const glassPanel: React.CSSProperties = {
+    backgroundColor: 'rgba(255, 253, 245, 0.72)',
+    backdropFilter: 'blur(18px) saturate(180%)',
+    WebkitBackdropFilter: 'blur(18px) saturate(180%)',
+    border: '4px solid black',
+    borderRadius: '16px',
+    boxShadow: '8px 8px 0 0 black',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  };
+
   const panelStyle: React.CSSProperties = isMobile
     ? {
+        ...glassPanel,
         position: 'fixed',
         top: '80px',
         left: '12px',
         right: '12px',
-        backgroundColor: '#FFFDF5',
-        border: '4px solid black',
-        borderRadius: '16px',
-        boxShadow: '8px 8px 0 0 black',
         zIndex: 300,
         maxHeight: 'calc(100vh - 100px)',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
       }
     : {
+        ...glassPanel,
         position: 'absolute',
         top: 'calc(100% + 8px)',
         right: 0,
         width: '360px',
-        backgroundColor: '#FFFDF5',
-        border: '4px solid black',
-        borderRadius: '16px',
-        boxShadow: '8px 8px 0 0 black',
         zIndex: 200,
         maxHeight: '70vh',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
       };
 
   return (
@@ -367,12 +365,17 @@ export function NotificationBell() {
         onClick={handleOpen}
         aria-label="Notifications"
         className="relative flex size-11 items-center justify-center rounded-2xl border-4 border-black shadow-brutal-sm transition-transform hover:-translate-y-0.5 active:translate-y-0.5"
-        style={{ backgroundColor: '#E6E6FA', color: '#000' }}
+        style={{
+          backgroundColor: 'rgba(230, 230, 250, 0.65)',
+          backdropFilter: 'blur(12px) saturate(160%)',
+          WebkitBackdropFilter: 'blur(12px) saturate(160%)',
+          color: '#000',
+        }}
       >
         <Bell className="size-5" strokeWidth={2.75} />
         {hasUnread && (
           <span
-            className="absolute flex items-center justify-center border-2 border-black font-black"
+            className="badge-pulse absolute flex items-center justify-center border-2 border-black font-black"
             style={{
               top: '-6px',
               right: '-6px',
@@ -394,9 +397,15 @@ export function NotificationBell() {
 
       {open && (
         <div style={panelStyle}>
+          {/* Header — glass tint */}
           <div
             className="flex items-center justify-between border-b-4 border-black shrink-0"
-            style={{ backgroundColor: '#E6E6FA', padding: '10px 14px' }}
+            style={{
+              backgroundColor: 'rgba(230, 230, 250, 0.55)',
+              backdropFilter: 'blur(14px) saturate(150%)',
+              WebkitBackdropFilter: 'blur(14px) saturate(150%)',
+              padding: '10px 14px',
+            }}
           >
             <p className="font-black" style={{ fontSize: '12px', color: '#000' }}>
               🔔 activity

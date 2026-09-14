@@ -71,7 +71,7 @@ export function Cartridge({
         {/* icon sticker label */}
         <span
           className={cn(
-            'flex items-center justify-center rounded-2xl border-4 border-ink bg-cream',
+            'gloss-shine flex items-center justify-center rounded-2xl border-4 border-ink bg-cream',
             large ? 'size-20' : 'size-14',
           )}
         >
@@ -102,7 +102,7 @@ export function Cartridge({
         />
 
         {typeof badge === 'number' && badge > 0 && (
-          <span className="absolute -right-3 -top-3 flex size-9 items-center justify-center rounded-full border-4 border-ink bg-cream font-display text-[0.6rem] text-ink shadow-brutal-sm">
+          <span className="badge-pulse absolute -right-3 -top-3 flex size-9 items-center justify-center rounded-full border-4 border-ink bg-cream font-display text-[0.6rem] text-ink shadow-brutal-sm">
             {badge > 9 ? '9+' : badge}
           </span>
         )}

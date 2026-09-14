@@ -289,25 +289,32 @@ export default function SettingsPage() {
               >
                 ...
               </span>
-            ) : push.subscribed ? (
-              <button
-                onClick={push.unsubscribe}
-                className="border-2 border-black bg-[#FFF5BA] text-black font-black text-xs rounded-lg hover:-translate-y-0.5 active:translate-y-0.5 transition shrink-0"
-                style={{ padding: '8px 14px', boxShadow: '2px 2px 0 0 black' }}
-              >
-                turn off
-              </button>
             ) : (
               <button
-                onClick={push.subscribe}
-                className="border-2 border-black text-black font-black text-xs rounded-lg hover:-translate-y-0.5 active:translate-y-0.5 transition shrink-0"
+                onClick={push.subscribed ? push.unsubscribe : push.subscribe}
+                className="relative border-2 border-black rounded-full transition shrink-0"
                 style={{
-                  backgroundColor: settings.accent_color,
-                  padding: '8px 14px',
+                  width: '48px',
+                  height: '26px',
+                  backgroundColor: push.subscribed
+                    ? settings.accent_color
+                    : '#D8D0C0',
                   boxShadow: '2px 2px 0 0 black',
+                  padding: 0,
+                  cursor: 'pointer',
                 }}
+                aria-pressed={push.subscribed}
               >
-                enable
+                <span
+                  className="absolute border-2 border-black rounded-full transition-all"
+                  style={{
+                    width: '18px',
+                    height: '18px',
+                    backgroundColor: '#FFFDF5',
+                    top: '2px',
+                    left: push.subscribed ? '24px' : '2px',
+                  }}
+                />
               </button>
             )}
           </RowInline>

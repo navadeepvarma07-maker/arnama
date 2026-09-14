@@ -441,3 +441,144 @@ h1, h2, h3, p, span, div {
     transform: scale(1);
   }
 }
+/* ============================================ */
+/* QUALITY PASS — Pulse, Gloss, Chrome          */
+/* ============================================ */
+
+/* Pulsing unread badge */
+@keyframes badge-pulse {
+  0%, 100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  50% {
+    transform: scale(1.12);
+    filter: brightness(1.15);
+  }
+}
+
+.badge-pulse {
+  animation: badge-pulse 2s ease-in-out infinite;
+}
+
+/* Glossy shine overlay — use on icon tiles, avatars */
+.gloss-shine {
+  position: relative;
+  overflow: hidden;
+}
+
+.gloss-shine::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      circle at 30% 25%,
+      rgba(255, 255, 255, 0.75) 0%,
+      rgba(255, 255, 255, 0.25) 22%,
+      transparent 48%
+    );
+  pointer-events: none;
+  border-radius: inherit;
+  z-index: 1;
+}
+
+/* Chrome gradient border — for premium avatar frames */
+.chrome-frame {
+  position: relative;
+}
+
+.chrome-frame::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from 45deg,
+    #FFD1DC,
+    #E6E6FA,
+    #D4F0F0,
+    #FFF5BA,
+    #FFD1DC
+  );
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* Button gloss sweep — a light sweeps across on hover */
+.btn-gloss {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.btn-gloss::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -120%;
+  width: 55%;
+  height: 100%;
+  background: linear-gradient(
+    120deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.65) 50%,
+    transparent 100%
+  );
+  transition: left 0.55s ease;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.btn-gloss:hover::after {
+  left: 130%;
+}
+
+/* Soft glow behind a container (for hero elements) */
+.glow-soft {
+  box-shadow:
+    8px 8px 0 0 black,
+    0 0 24px rgba(255, 139, 167, 0.35);
+}
+/* ============================================ */
+/* GLASS — reusable frosted surfaces            */
+/* ============================================ */
+
+.glass-cream {
+  background: rgba(255, 253, 245, 0.72);
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+}
+
+.glass-lavender {
+  background: rgba(230, 230, 250, 0.55);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+}
+
+.glass-mint {
+  background: rgba(226, 240, 217, 0.55);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+}
+
+.glass-pink {
+  background: rgba(255, 209, 220, 0.55);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+}
+
+.glass-soft {
+  background: rgba(255, 255, 255, 0.28);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+}
+
+/* Fallback for browsers without backdrop-filter */
+@supports not (backdrop-filter: blur(1px)) {
+  .glass-cream { background: rgba(255, 253, 245, 0.9); }
+  .glass-lavender { background: rgba(230, 230, 250, 0.9); }
+  .glass-mint { background: rgba(226, 240, 217, 0.9); }
+  .glass-pink { background: rgba(255, 209, 220, 0.9); }
+  .glass-soft { background: rgba(255, 255, 255, 0.6); }
+}

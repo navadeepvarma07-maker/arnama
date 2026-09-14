@@ -36,11 +36,25 @@ export function PlayerCard() {
     });
   }, []);
 
-  // Pastel card — matches arcade cartridges
+  // GLASS — bright pastel + top shine + blur + inner highlight
   const cardStyle: React.CSSProperties = {
-    backgroundColor: '#E6E6FA', // lavender
+    background: `
+      linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.5) 0%,
+        rgba(255, 255, 255, 0.15) 25%,
+        rgba(255, 255, 255, 0) 55%
+      ),
+      rgba(230, 230, 250, 0.88)
+    `,
+    backdropFilter: 'blur(20px) saturate(180%)',
+    WebkitBackdropFilter: 'blur(20px) saturate(180%)',
     borderColor: '#000',
-    boxShadow: '8px 8px 0px 0px rgba(0,0,0,1)',
+    boxShadow: `
+      8px 8px 0px 0px rgba(0, 0, 0, 1),
+      inset 0 1px 0 rgba(255, 255, 255, 0.7),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.05)
+    `,
   };
 
   if (loading) {
@@ -64,7 +78,7 @@ export function PlayerCard() {
         </p>
         <Link
           href="/login"
-          className="inline-flex items-center gap-2 px-4 py-2.5 border-4 border-black bg-[#FFD1DC] font-display text-xs rounded-2xl hover:-translate-y-0.5 active:translate-y-0.5 transition"
+          className="btn-gloss inline-flex items-center gap-2 px-4 py-2.5 border-4 border-black bg-[#FFD1DC] font-display text-xs rounded-2xl hover:-translate-y-0.5 active:translate-y-0.5 transition"
           style={{ color: '#000', boxShadow: '4px 4px 0px 0px rgba(0,0,0,1)' }}
         >
           <LogIn className="size-4" strokeWidth={2.75} />
@@ -90,10 +104,19 @@ export function PlayerCard() {
   return (
     <div className="rounded-3xl border-4 p-5" style={cardStyle}>
       <div className="flex items-center gap-4">
+        {/* Avatar — glass with pastel shine */}
         <div
-          className="flex size-16 shrink-0 animate-float items-center justify-center rounded-2xl border-4 font-display text-lg"
+          className="gloss-shine flex size-16 shrink-0 animate-float items-center justify-center rounded-2xl border-4 font-display text-lg"
           style={{
-            backgroundColor: '#FFFDF5',
+            background: `
+              linear-gradient(
+                180deg,
+                rgba(255, 255, 255, 0.8) 0%,
+                rgba(255, 255, 255, 0.2) 45%,
+                rgba(255, 255, 255, 0) 100%
+              ),
+              #FFFDF5
+            `,
             borderColor: '#000',
             color: '#000',
           }}
@@ -127,27 +150,55 @@ export function PlayerCard() {
           </span>
           <span style={{ color: 'rgba(0,0,0,0.55)' }}>{xpDisplay}</span>
         </div>
+        {/* XP track — glass with top shine */}
         <div
           className="h-4 w-full overflow-hidden rounded-full border-4 border-black"
-          style={{ backgroundColor: '#FFFDF5' }}
+          style={{
+            background: `
+              linear-gradient(
+                180deg,
+                rgba(0, 0, 0, 0.08) 0%,
+                rgba(255, 255, 255, 0.4) 100%
+              ),
+              #FFFDF5
+            `,
+          }}
         >
           <div
             className="h-full rounded-r-full transition-all duration-500"
             style={{
-              width: `${xpPercent}%`,
-              backgroundColor: '#7FB89B',
+              background: `
+                linear-gradient(
+                  180deg,
+                  rgba(255, 255, 255, 0.35) 0%,
+                  rgba(255, 255, 255, 0) 50%
+                ),
+                #7FB89B
+              `,
             }}
           />
         </div>
       </div>
 
-      {/* stat stickers */}
+      {/* stat stickers — glass pastels */}
       <div className="mt-5 grid grid-cols-2 gap-3">
         <div
           className="flex items-center gap-2 rounded-2xl border-4 border-black px-3 py-2.5"
           style={{
-            backgroundColor: '#FFD1DC',
-            boxShadow: '3px 3px 0px 0px rgba(0,0,0,1)',
+            background: `
+              linear-gradient(
+                180deg,
+                rgba(255, 255, 255, 0.55) 0%,
+                rgba(255, 255, 255, 0) 55%
+              ),
+              rgba(255, 209, 220, 0.9)
+            `,
+            backdropFilter: 'blur(10px) saturate(160%)',
+            WebkitBackdropFilter: 'blur(10px) saturate(160%)',
+            boxShadow: `
+              3px 3px 0px 0px rgba(0,0,0,1),
+              inset 0 1px 0 rgba(255, 255, 255, 0.6)
+            `,
           }}
         >
           <Coins className="size-5" strokeWidth={2.75} style={{ color: '#000' }} />
@@ -166,8 +217,20 @@ export function PlayerCard() {
         <div
           className="flex items-center gap-2 rounded-2xl border-4 border-black px-3 py-2.5"
           style={{
-            backgroundColor: '#E2F0D9',
-            boxShadow: '3px 3px 0px 0px rgba(0,0,0,1)',
+            background: `
+              linear-gradient(
+                180deg,
+                rgba(255, 255, 255, 0.55) 0%,
+                rgba(255, 255, 255, 0) 55%
+              ),
+              rgba(226, 240, 217, 0.9)
+            `,
+            backdropFilter: 'blur(10px) saturate(160%)',
+            WebkitBackdropFilter: 'blur(10px) saturate(160%)',
+            boxShadow: `
+              3px 3px 0px 0px rgba(0,0,0,1),
+              inset 0 1px 0 rgba(255, 255, 255, 0.6)
+            `,
           }}
         >
           <Star className="size-5" strokeWidth={2.75} style={{ color: '#000' }} />
