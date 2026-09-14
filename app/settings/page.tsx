@@ -522,13 +522,37 @@ function Section({
     <div
       className="border-4 border-black rounded-2xl overflow-hidden"
       style={{
-        backgroundColor: '#FFFDF5',
-        boxShadow: '6px 6px 0 0 black',
+        background: `
+          linear-gradient(
+            180deg,
+            rgba(255, 255, 255, 0.5) 0%,
+            rgba(255, 255, 255, 0.15) 25%,
+            rgba(255, 255, 255, 0) 55%
+          ),
+          rgba(255, 253, 245, 0.88)
+        `,
+        backdropFilter: 'blur(20px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+        boxShadow: `
+          6px 6px 0 0 black,
+          inset 0 1px 0 rgba(255, 255, 255, 0.7),
+          inset 0 -1px 0 rgba(0, 0, 0, 0.04)
+        `,
       }}
     >
       <div
         className="border-b-4 border-black"
-        style={{ backgroundColor: '#E6E6FA', padding: '10px 14px' }}
+        style={{
+          background: `
+            linear-gradient(
+              180deg,
+              rgba(255, 255, 255, 0.55) 0%,
+              rgba(255, 255, 255, 0) 65%
+            ),
+            rgba(230, 230, 250, 0.85)
+          `,
+          padding: '10px 14px',
+        }}
       >
         <p className="font-black" style={{ fontSize: '12px', color: '#000' }}>
           {emoji} {title}

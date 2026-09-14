@@ -2,14 +2,17 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { displayLabel, initialsFor } from '@/lib/use-profile';
 
 type Profile = {
   id: string;
   email: string;
+  display_name: string | null;
+  avatar_color: string;
   created_at: string;
 };
 
-const AVATAR_COLORS = ['#FFFDF5', '#E6E6FA', '#FFD1DC'] as const;
+const FALLBACK_AVATAR = ['#E2F0D9', '#FFD1DC', '#E6E6FA', '#FFF5BA', '#D4F0F0'];
 
 export function FriendsStrip() {
   const [myId, setMyId] = useState<string | null>(null);
@@ -28,11 +31,11 @@ export function FriendsStrip() {
   useEffect(() => {
     supabase
       .from('profiles')
-      .select('*')
+      .select('id, email, display_name, avatar_color, created_at')
       .order('created_at', { ascending: true })
       .then(({ data, error }) => {
         if (error) console.error(error);
-        else setProfiles(data ?? []);
+        else setProfiles((data ?? []) as Profile[]);
         setLoading(false);
       });
   }, []);
@@ -62,11 +65,25 @@ export function FriendsStrip() {
 
   const onlineCount = onlineIds.length;
 
-  // Pastel mint card — matches arcade cartridges
+  // GLASS — mint + top shine + inner highlight
   const cardStyle: React.CSSProperties = {
-    backgroundColor: '#E2F0D9', // mint
+    background: `
+      linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.5) 0%,
+        rgba(255, 255, 255, 0.15) 25%,
+        rgba(255, 255, 255, 0) 55%
+      ),
+      rgba(226, 240, 217, 0.88)
+    `,
+    backdropFilter: 'blur(20px) saturate(180%)',
+    WebkitBackdropFilter: 'blur(20px) saturate(180%)',
     borderColor: '#000',
-    boxShadow: '8px 8px 0px 0px rgba(0,0,0,1)',
+    boxShadow: `
+      8px 8px 0px 0px rgba(0, 0, 0, 1),
+      inset 0 1px 0 rgba(255, 255, 255, 0.7),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.05)
+    `,
   };
 
   if (loading) {
@@ -112,7 +129,17 @@ export function FriendsStrip() {
         </h2>
         <span
           className="flex items-center gap-1.5 rounded-full border-2 border-black px-2.5 py-1 text-xs font-bold"
-          style={{ backgroundColor: '#FFFDF5', color: '#000' }}
+          style={{
+            background: `
+              linear-gradient(
+                180deg,
+                rgba(255, 255, 255, 0.6) 0%,
+                rgba(255, 255, 255, 0) 100%
+              ),
+              rgba(255, 253, 245, 0.9)
+            `,
+            color: '#000',
+          }}
         >
           <span
             className="size-2 rounded-full border border-black"
@@ -126,17 +153,26 @@ export function FriendsStrip() {
         {sorted.map((p, idx) => {
           const isMe = p.id === myId;
           const isOnline = onlineIds.includes(p.id);
-          const prefix = p.email.split('@')[0];
-          const initials = prefix.slice(0, 2).toUpperCase();
-          const avatarBg = AVATAR_COLORS[idx % AVATAR_COLORS.length];
+          const label = displayLabel(p.email, p.display_name);
+          const initials = initialsFor(p.email, p.display_name);
+          const avatarBg =
+            p.avatar_color || FALLBACK_AVATAR[idx % FALLBACK_AVATAR.length];
 
           return (
             <li key={p.id} className="flex items-center gap-3">
               <div className="relative">
+                {/* Avatar — glass shine */}
                 <div
-                  className="flex size-11 items-center justify-center rounded-xl border-4 font-display text-[0.6rem]"
+                  className="gloss-shine flex size-11 items-center justify-center rounded-xl border-4 font-display text-[0.6rem]"
                   style={{
-                    backgroundColor: avatarBg,
+                    background: `
+                      linear-gradient(
+                        180deg,
+                        rgba(255, 255, 255, 0.55) 0%,
+                        rgba(255, 255, 255, 0) 55%
+                      ),
+                      ${avatarBg}
+                    `,
                     borderColor: '#000',
                     color: '#000',
                   }}
@@ -155,14 +191,12 @@ export function FriendsStrip() {
                   className="truncate text-sm font-bold"
                   style={{ color: '#000' }}
                 >
-                  {isMe ? `${prefix} (you)` : prefix}
+                  {isMe ? `${label} (you)` : label}
                 </p>
                 <p
                   className="text-xs font-semibold"
                   style={{
-                    color: isOnline
-                      ? '#3A7A5E'
-                      : 'rgba(0,0,0,0.45)',
+                    color: isOnline ? '#3A7A5E' : 'rgba(0,0,0,0.45)',
                   }}
                 >
                   {isOnline ? 'in the portal' : 'away'}
