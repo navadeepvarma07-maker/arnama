@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { useProfile } from '@/lib/use-profile';
-import { BgPickerButton, getBgStyle, MessageBg } from '@/components/message-bg';
+import { BgPickerButton, getBgStyle, isDarkBg, MessageBg } from '@/components/message-bg';
 
 type Message = {
   id: number;
@@ -25,6 +25,8 @@ export default function ChatPage() {
   const { profile } = useProfile();
   const timeFormat = profile?.time_format ?? '12h';
   const chatBg: MessageBg = (((profile as any)?.chat_bg) ?? 'plain') as MessageBg;
+  const chatBgDark = isDarkBg(chatBg);
+  const chatMetaColor = chatBgDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.4)';
 
   const [email, setEmail] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -33,14 +35,13 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false);
   const [newBelow, setNewBelow] = useState(0);
 
-  // Reply state
   const [replyTo, setReplyTo] = useState<Message | null>(null);
-
-  // Edit state
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editText, setEditText] = useState('');
 
-  // Context menu
+  // Highlight: { id, key } — key forces a fresh render so the animation restarts
+  const [highlight, setHighlight] = useState<{ id: number; key: number } | null>(null);
+
   const [contextMenu, setContextMenu] = useState<ContextMenu>(null);
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
 
@@ -49,9 +50,7 @@ export default function ChatPage() {
   const isAtBottomRef = useRef(true);
   const initialLoadDone = useRef(false);
 
-  // =========================
   // AUTH
-  // =========================
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       const user = data.user;
@@ -72,9 +71,7 @@ export default function ChatPage() {
     });
   }, []);
 
-  // =========================
   // LOAD MESSAGES
-  // =========================
   useEffect(() => {
     if (!email) return;
     supabase
@@ -94,9 +91,7 @@ export default function ChatPage() {
       });
   }, [email]);
 
-  // =========================
   // REALTIME
-  // =========================
   useEffect(() => {
     if (!email) return;
     const channel = supabase
@@ -145,14 +140,12 @@ export default function ChatPage() {
     };
   }, [email]);
 
-  // Auto-scroll when messages change
+  // Auto-scroll
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // =========================
   // SCROLL
-  // =========================
   function handleScroll() {
     const el = scrollRef.current;
     if (!el) return;
@@ -166,9 +159,21 @@ export default function ChatPage() {
     setNewBelow(0);
   }
 
-  // =========================
+  // JUMP TO REPLY — fresh key every call so animation restarts
+  function jumpToMessage(id: number) {
+    const el = document.getElementById(`msg-${id}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    // Trigger highlight with a new key — forces React to remount the overlay
+    setHighlight({ id, key: Date.now() });
+    setTimeout(() => {
+      // Clear only if this is still the current highlight
+      setHighlight((prev) => (prev && prev.id === id ? null : prev));
+    }, 1600);
+  }
+
   // SEND
-  // =========================
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
     const text = input.trim();
@@ -215,9 +220,7 @@ export default function ChatPage() {
     setSending(false);
   }
 
-  // =========================
   // EDIT
-  // =========================
   async function saveEdit(messageId: number) {
     const text = editText.trim();
     if (!text) {
@@ -245,9 +248,7 @@ export default function ChatPage() {
     }
   }
 
-  // =========================
   // DELETE
-  // =========================
   async function deleteMessage(messageId: number) {
     if (!confirm('Delete this message?')) return;
     const backup = messages;
@@ -264,18 +265,14 @@ export default function ChatPage() {
     }
   }
 
-  // =========================
-  // BG SAVE
-  // =========================
+  // BG
   async function handleBgChange(bg: MessageBg) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     await supabase.from('profiles').update({ chat_bg: bg }).eq('id', user.id);
   }
 
-  // =========================
   // CONTEXT MENU
-  // =========================
   function openContextMenu(message: Message, x: number, y: number) {
     const menuWidth = 180;
     const menuHeight = 180;
@@ -327,9 +324,7 @@ export default function ChatPage() {
     };
   }, [contextMenu]);
 
-  // =========================
   // HELPERS
-  // =========================
   function findMessageById(id: number | null): Message | null {
     if (id === null || id === undefined) return null;
     return messages.find((m) => m.id === id) ?? null;
@@ -396,7 +391,7 @@ export default function ChatPage() {
           className="flex-1 min-h-0 flex flex-col border-4 border-black bg-white rounded-2xl overflow-hidden relative"
           style={{ boxShadow: '8px 8px 0px 0px rgba(0,0,0,1)' }}
         >
-          {/* Messages area — background applied here */}
+          {/* Messages area */}
           <div
             ref={scrollRef}
             onScroll={handleScroll}
@@ -422,15 +417,18 @@ export default function ChatPage() {
                 });
                 const isEditing = editingId === m.id;
                 const repliedTo = findMessageById(m.reply_to_id);
+                const isHighlighted = highlight?.id === m.id;
 
                 return (
                   <div
                     key={m.id}
+                    id={`msg-${m.id}`}
                     className={`flex ${mine ? 'msg-mine' : 'msg-theirs'}`}
                     style={{
                       justifyContent: mine ? 'flex-end' : 'flex-start',
                       width: '100%',
                       marginTop: isNewGroup && i > 0 ? '14px' : '0',
+                      scrollMarginTop: '80px',
                     }}
                   >
                     <div
@@ -444,10 +442,11 @@ export default function ChatPage() {
                         <div
                           className="msg-meta text-[10px] font-black uppercase tracking-wider"
                           style={{
-                            color: 'rgba(0,0,0,0.4)',
+                            color: chatMetaColor,
                             marginBottom: '6px',
                             paddingLeft: '4px',
                             paddingRight: '4px',
+                            textShadow: chatBgDark ? '0 1px 2px rgba(0,0,0,0.8)' : 'none',
                           }}
                         >
                           {mine ? 'you' : sender} · {time}
@@ -465,25 +464,55 @@ export default function ChatPage() {
                           backgroundColor: mine ? '#E2F0D9' : '#FFD1DC',
                           boxShadow: '2px 2px 0px 0px rgba(0,0,0,1)',
                           minWidth: '80px',
+                          position: 'relative',
                         }}
                       >
-                        {repliedTo && (
+                        {isHighlighted && (
                           <div
-                            className="rounded-lg border-l-4 border-black"
+                            key={highlight?.key}
+                            aria-hidden
+                            style={{
+                              position: 'absolute',
+                              inset: -8,
+                              border: '4px solid #FF8BA7',
+                              borderRadius: 24,
+                              background: 'rgba(255,245,186,0.55)',
+                              pointerEvents: 'none',
+                              boxShadow: '0 0 20px rgba(255,139,167,0.7)',
+                              animation: 'msg-flash-fade 1.6s ease-out forwards',
+                              zIndex: 10,
+                            }}
+                          />
+                        )}
+
+                        {/* Reply preview — clickable to jump */}
+                        {repliedTo && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              jumpToMessage(repliedTo.id);
+                            }}
+                            className="rounded-lg border-l-4 border-black text-left w-full"
                             style={{
                               backgroundColor: 'rgba(0,0,0,0.08)',
-                              padding: '5px 8px',
-                              marginBottom: '6px',
+                              padding: '3px 8px',
+                              marginBottom: '5px',
+                              cursor: 'pointer',
+                              display: 'block',
+                              maxWidth: '100%',
+                              border: 'none',
+                              borderLeft: '4px solid black',
                             }}
                           >
                             <p
                               style={{
-                                fontSize: '9px',
+                                fontSize: '8px',
                                 fontWeight: 900,
                                 textTransform: 'uppercase',
                                 letterSpacing: '0.06em',
                                 color: 'rgba(0,0,0,0.5)',
                                 margin: 0,
+                                lineHeight: 1.2,
                               }}
                             >
                               {repliedTo.user_email === email
@@ -492,18 +521,19 @@ export default function ChatPage() {
                             </p>
                             <p
                               style={{
-                                fontSize: '11px',
+                                fontSize: '10px',
                                 fontWeight: 700,
-                                color: 'rgba(0,0,0,0.7)',
-                                margin: '2px 0 0',
+                                color: 'rgba(0,0,0,0.65)',
+                                margin: '1px 0 0',
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
                                 whiteSpace: 'nowrap',
+                                lineHeight: 1.3,
                               }}
                             >
-                              {previewOf(repliedTo.content, 40)}
+                              {previewOf(repliedTo.content, 25)}
                             </p>
-                          </div>
+                          </button>
                         )}
 
                         {isEditing ? (
@@ -539,27 +569,14 @@ export default function ChatPage() {
                               <button
                                 onClick={() => saveEdit(m.id)}
                                 className="border-2 border-black rounded-lg font-black"
-                                style={{
-                                  padding: '4px 12px',
-                                  fontSize: '11px',
-                                  backgroundColor: '#E2F0D9',
-                                  color: '#000',
-                                }}
+                                style={{ padding: '4px 12px', fontSize: '11px', backgroundColor: '#E2F0D9', color: '#000' }}
                               >
                                 save
                               </button>
                               <button
-                                onClick={() => {
-                                  setEditingId(null);
-                                  setEditText('');
-                                }}
+                                onClick={() => { setEditingId(null); setEditText(''); }}
                                 className="border-2 border-black rounded-lg font-black"
-                                style={{
-                                  padding: '4px 12px',
-                                  fontSize: '11px',
-                                  backgroundColor: '#FFD1DC',
-                                  color: '#000',
-                                }}
+                                style={{ padding: '4px 12px', fontSize: '11px', backgroundColor: '#FFD1DC', color: '#000' }}
                               >
                                 cancel
                               </button>
@@ -623,12 +640,7 @@ export default function ChatPage() {
           {replyTo && (
             <div
               className="border-t-4 border-black flex items-center"
-              style={{
-                backgroundColor: '#FFF5BA',
-                padding: '8px 12px',
-                gap: '10px',
-                flexShrink: 0,
-              }}
+              style={{ backgroundColor: '#FFF5BA', padding: '8px 12px', gap: '10px', flexShrink: 0 }}
             >
               <div className="flex-1 min-w-0">
                 <p
@@ -641,10 +653,7 @@ export default function ChatPage() {
                     letterSpacing: '0.06em',
                   }}
                 >
-                  replying to{' '}
-                  {replyTo.user_email === email
-                    ? 'yourself'
-                    : replyTo.user_email.split('@')[0]}
+                  replying to {replyTo.user_email === email ? 'yourself' : replyTo.user_email.split('@')[0]}
                 </p>
                 <p
                   style={{
@@ -721,10 +730,7 @@ export default function ChatPage() {
           }}
         >
           <button
-            onClick={() => {
-              setReplyTo(contextMenu.message);
-              closeContextMenu();
-            }}
+            onClick={() => { setReplyTo(contextMenu.message); closeContextMenu(); }}
             className="text-left font-black rounded-lg hover:bg-[#E2F0D9] transition"
             style={{ padding: '8px 12px', fontSize: '12px', color: '#000', border: 'none', background: 'transparent', cursor: 'pointer' }}
           >
