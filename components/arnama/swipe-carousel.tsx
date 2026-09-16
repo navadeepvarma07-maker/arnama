@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export function SwipeCarousel({
   slides,
@@ -17,75 +17,161 @@ export function SwipeCarousel({
 }) {
   const [dragOffset, setDragOffset] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+
+  const viewportRef = useRef<HTMLDivElement>(null);
+
+  // Refs so native listeners always read fresh values
+  const indexRef = useRef(index);
+  const countRef = useRef(slides.length);
+  const onIndexChangeRef = useRef(onIndexChange);
+
   const startX = useRef(0);
   const startY = useRef(0);
   const axis = useRef<'x' | 'y' | null>(null);
-  const pointerDown = useRef(false);
-  const count = slides.length;
+  const active = useRef(false);
+  const lastOffset = useRef(0);
+  const wasDragging = useRef(false);
 
-  function onPointerDown(e: React.PointerEvent) {
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    pointerDown.current = true;
-    startX.current = e.clientX;
-    startY.current = e.clientY;
-    axis.current = null;
-    setIsDragging(false);
-  }
+  useEffect(() => {
+    indexRef.current = index;
+    countRef.current = slides.length;
+    onIndexChangeRef.current = onIndexChange;
+  }, [index, slides.length, onIndexChange]);
 
-  function onPointerMove(e: React.PointerEvent) {
-    if (!pointerDown.current) return;
+  // Native touch + mouse listeners
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
 
-    if (axis.current === null) {
-      const dx = e.clientX - startX.current;
-      const dy = e.clientY - startY.current;
-      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
-        axis.current = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-        if (axis.current === 'x') {
-          setIsDragging(true);
-          try {
-            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-          } catch {}
+    const THRESHOLD = 55;
+    const MIN_MOVE = 8;
+
+    function resetState() {
+      startX.current = 0;
+      startY.current = 0;
+      axis.current = null;
+      active.current = false;
+      lastOffset.current = 0;
+      wasDragging.current = false;
+      setDragOffset(0);
+      setIsDragging(false);
+    }
+
+    function onStart(x: number, y: number) {
+      startX.current = x;
+      startY.current = y;
+      axis.current = null;
+      active.current = true;
+      lastOffset.current = 0;
+      wasDragging.current = false;
+      setDragOffset(0);
+      setIsDragging(false);
+    }
+
+    function onMove(x: number, y: number, touchEvt?: TouchEvent) {
+      if (!active.current) return;
+
+      const dx = x - startX.current;
+      const dy = y - startY.current;
+
+      // Decide axis on first meaningful move
+      if (axis.current === null) {
+        if (Math.abs(dx) > MIN_MOVE || Math.abs(dy) > MIN_MOVE) {
+          axis.current = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+          if (axis.current === 'x') {
+            wasDragging.current = true;
+            setIsDragging(true);
+          }
+        }
+        return;
+      }
+
+      if (axis.current !== 'x') return;
+
+      // 🎯 KEY FIX — stop the browser from scrolling while we drag horizontally
+      if (touchEvt && touchEvt.cancelable) {
+        touchEvt.preventDefault();
+      }
+
+      const cur = indexRef.current;
+      const cnt = countRef.current;
+      let off = dx;
+      if ((cur === 0 && dx > 0) || (cur === cnt - 1 && dx < 0)) {
+        off = dx * 0.3;
+      }
+      lastOffset.current = off;
+      setDragOffset(off);
+    }
+
+    function onEnd() {
+      if (!active.current) return;
+
+      const cur = indexRef.current;
+      const cnt = countRef.current;
+      const off = lastOffset.current;
+
+      if (axis.current === 'x' && wasDragging.current) {
+        if (off < -THRESHOLD && cur < cnt - 1) {
+          onIndexChangeRef.current(cur + 1);
+        } else if (off > THRESHOLD && cur > 0) {
+          onIndexChangeRef.current(cur - 1);
         }
       }
-      return;
+      resetState();
     }
 
-    if (axis.current !== 'x') return;
-
-    const dx = e.clientX - startX.current;
-    let offset = dx;
-    if ((index === 0 && dx > 0) || (index === count - 1 && dx < 0)) {
-      offset = dx * 0.3;
+    // Touch handlers
+    function handleTouchStart(e: TouchEvent) {
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      onStart(t.clientX, t.clientY);
     }
-    setDragOffset(offset);
-  }
 
-  function endDrag() {
-    pointerDown.current = false;
-
-    if (axis.current === 'x' && isDragging) {
-      const threshold = 60;
-      if (dragOffset < -threshold && index < count - 1) {
-        onIndexChange(index + 1);
-      } else if (dragOffset > threshold && index > 0) {
-        onIndexChange(index - 1);
-      }
+    function handleTouchMove(e: TouchEvent) {
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      onMove(t.clientX, t.clientY, e);
     }
-    setDragOffset(0);
-    setIsDragging(false);
-    axis.current = null;
-  }
 
-  function onPointerUp(e: React.PointerEvent) {
-    try {
-      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch {}
-    endDrag();
-  }
+    function handleTouchEnd() {
+      onEnd();
+    }
 
-  function onPointerCancel() {
-    endDrag();
-  }
+    // Mouse handlers (desktop)
+    function handleMouseDown(e: MouseEvent) {
+      if (e.button !== 0) return;
+      onStart(e.clientX, e.clientY);
+    }
+
+    function handleMouseMove(e: MouseEvent) {
+      if (!active.current) return;
+      onMove(e.clientX, e.clientY);
+    }
+
+    function handleMouseUp() {
+      onEnd();
+    }
+
+    el.addEventListener('touchstart', handleTouchStart, { passive: true });
+    el.addEventListener('touchmove', handleTouchMove, { passive: false });
+    el.addEventListener('touchend', handleTouchEnd);
+    el.addEventListener('touchcancel', handleTouchEnd);
+
+    el.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      el.removeEventListener('touchstart', handleTouchStart);
+      el.removeEventListener('touchmove', handleTouchMove);
+      el.removeEventListener('touchend', handleTouchEnd);
+      el.removeEventListener('touchcancel', handleTouchEnd);
+
+      el.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
 
   return (
     <div
@@ -97,7 +183,7 @@ export function SwipeCarousel({
         ...(mode === 'fill' ? { flex: 1 } : {}),
       }}
     >
-      {/* Segmented glass tab bar — full width */}
+      {/* Segmented glass tab bar */}
       <div
         style={{
           display: 'flex',
@@ -168,10 +254,7 @@ export function SwipeCarousel({
 
       {/* Slides viewport */}
       <div
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerCancel}
+        ref={viewportRef}
         style={{
           position: 'relative',
           overflow: 'hidden',
