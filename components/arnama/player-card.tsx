@@ -26,8 +26,10 @@ export function PlayerCard() {
           .from('messages')
           .select('*', { count: 'exact', head: true })
           .eq('user_email', user.email)
-          .then(({ count }) => {
-            setCoinCount(count ?? 0);
+          .then(({ count, error }) => {
+            if (error) console.error('message count failed:', error);
+            const n = typeof count === 'number' && Number.isFinite(count) ? count : 0;
+            setCoinCount(n);
             setLoading(false);
           });
       } else {
@@ -60,10 +62,7 @@ export function PlayerCard() {
   if (loading) {
     return (
       <div className="rounded-3xl border-4 p-5" style={cardStyle}>
-        <p
-          className="text-sm font-bold"
-          style={{ color: 'rgba(0,0,0,0.5)' }}
-        >
+        <p className="text-sm font-bold" style={{ color: 'rgba(0,0,0,0.5)' }}>
           loading...
         </p>
       </div>
@@ -98,13 +97,14 @@ export function PlayerCard() {
     : '—';
 
   const xpGoal = 100;
-  const xpPercent = Math.min(100, (coinCount / xpGoal) * 100);
-  const xpDisplay = `${coinCount} / ${xpGoal}`;
+  // BULLETPROOF: never NaN, always clamped 0-100
+  const safeCount = Number.isFinite(coinCount) && coinCount > 0 ? coinCount : 0;
+  const xpPercent = Math.max(0, Math.min(100, safeCount));
+  const xpDisplay = `${safeCount} / ${xpGoal}`;
 
   return (
     <div className="rounded-3xl border-4 p-5" style={cardStyle}>
       <div className="flex items-center gap-4">
-        {/* Avatar — glass with pastel shine */}
         <div
           className="gloss-shine flex size-16 shrink-0 animate-float items-center justify-center rounded-2xl border-4 font-display text-lg"
           style={{
@@ -124,22 +124,16 @@ export function PlayerCard() {
           {initials}
         </div>
         <div className="min-w-0">
-          <p
-            className="truncate font-display text-[0.7rem]"
-            style={{ color: '#000' }}
-          >
+          <p className="truncate font-display text-[0.7rem]" style={{ color: '#000' }}>
             {displayName}
           </p>
-          <p
-            className="mt-1 text-sm font-bold"
-            style={{ color: 'rgba(0,0,0,0.55)' }}
-          >
+          <p className="mt-1 text-sm font-bold" style={{ color: 'rgba(0,0,0,0.55)' }}>
             arnama member
           </p>
         </div>
       </div>
 
-      {/* XP bar */}
+      {/* XP bar — bulletproof */}
       <div className="mt-5">
         <div
           className="mb-1.5 flex items-center justify-between text-xs font-bold"
@@ -150,10 +144,10 @@ export function PlayerCard() {
           </span>
           <span style={{ color: 'rgba(0,0,0,0.55)' }}>{xpDisplay}</span>
         </div>
-        {/* XP track — glass with top shine */}
         <div
-          className="h-4 w-full overflow-hidden rounded-full border-4 border-black"
+          className="h-4 w-full rounded-full border-4 border-black overflow-hidden"
           style={{
+            position: 'relative',
             background: `
               linear-gradient(
                 180deg,
@@ -165,8 +159,12 @@ export function PlayerCard() {
           }}
         >
           <div
-            className="h-full rounded-r-full transition-all duration-500"
             style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              bottom: 0,
+              width: `${xpPercent}%`,
               background: `
                 linear-gradient(
                   180deg,
@@ -175,6 +173,8 @@ export function PlayerCard() {
                 ),
                 #7FB89B
               `,
+              borderRadius: xpPercent >= 99 ? '0' : '0 999px 999px 0',
+              transition: 'width 0.5s ease',
             }}
           />
         </div>
@@ -204,12 +204,9 @@ export function PlayerCard() {
           <Coins className="size-5" strokeWidth={2.75} style={{ color: '#000' }} />
           <div className="leading-none">
             <p className="font-display text-[0.65rem]" style={{ color: '#000' }}>
-              {coinCount}
+              {safeCount}
             </p>
-            <p
-              className="mt-1 text-[0.7rem] font-bold"
-              style={{ color: 'rgba(0,0,0,0.6)' }}
-            >
+            <p className="mt-1 text-[0.7rem] font-bold" style={{ color: 'rgba(0,0,0,0.6)' }}>
               messages
             </p>
           </div>
@@ -238,10 +235,7 @@ export function PlayerCard() {
             <p className="font-display text-[0.65rem]" style={{ color: '#000' }}>
               {joinedLabel}
             </p>
-            <p
-              className="mt-1 text-[0.7rem] font-bold"
-              style={{ color: 'rgba(0,0,0,0.6)' }}
-            >
+            <p className="mt-1 text-[0.7rem] font-bold" style={{ color: 'rgba(0,0,0,0.6)' }}>
               joined
             </p>
           </div>
