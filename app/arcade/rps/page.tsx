@@ -65,7 +65,6 @@ export default function RpsPage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
-  // ---- Bot mode state (fully local) ----
   const [isBotMode, setIsBotMode] = useState(false);
   const [botMyChoice, setBotMyChoice] = useState<Choice | null>(null);
   const [botOppChoice, setBotOppChoice] = useState<Choice | null>(null);
@@ -87,10 +86,9 @@ export default function RpsPage() {
     });
   }, []);
 
-  // Load active online match
   useEffect(() => {
     if (!userId) return;
-    if (isBotMode) return; // skip when playing bot
+    if (isBotMode) return;
     supabase
       .from('arcade_rps')
       .select('*')
@@ -104,14 +102,18 @@ export default function RpsPage() {
       });
   }, [userId, isBotMode]);
 
-  // Realtime updates (online mode only)
   useEffect(() => {
     if (!match || isBotMode) return;
     const channel = supabase
       .channel(`rps-${match.id}`)
       .on(
         'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'arcade_rps', filter: `id=eq.${match.id}` },
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'arcade_rps',
+          filter: `id=eq.${match.id}`,
+        },
         (payload) => setMatch(payload.new as Match)
       )
       .subscribe();
@@ -120,7 +122,6 @@ export default function RpsPage() {
     };
   }, [match?.id, isBotMode]);
 
-  // Auto-advance round when both online choices are in
   useEffect(() => {
     if (isBotMode) return;
     if (!match) return;
@@ -163,9 +164,13 @@ export default function RpsPage() {
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [match?.player_a_choice, match?.player_b_choice, match?.status, isBotMode]);
+  }, [
+    match?.player_a_choice,
+    match?.player_b_choice,
+    match?.status,
+    isBotMode,
+  ]);
 
-  // ---- ONLINE MODE ----
   async function quickMatch() {
     if (!userId || !email) return;
     setError('');
@@ -199,7 +204,8 @@ export default function RpsPage() {
         .select();
 
       if (error) setError('⚠️ ' + error.message);
-      else if (!data || data.length === 0) setError('⚠️ Could not join — try again');
+      else if (!data || data.length === 0)
+        setError('⚠️ Could not join — try again');
       else setMatch(data[0] as Match);
     } else {
       const { data, error } = await supabase
@@ -212,7 +218,8 @@ export default function RpsPage() {
         .select();
 
       if (error) setError('⚠️ ' + error.message);
-      else if (!data || data.length === 0) setError('⚠️ Could not create game');
+      else if (!data || data.length === 0)
+        setError('⚠️ Could not create game');
       else setMatch(data[0] as Match);
     }
     setCreating(false);
@@ -250,12 +257,11 @@ export default function RpsPage() {
 
   async function playAgain() {
     if (!match) return;
-    await supabase.from('arcade_rps').delete().eq('id', match.id);
+    // KEEP the finished match as history, start a fresh one
     setMatch(null);
     setTimeout(() => quickMatch(), 100);
   }
 
-  // ---- BOT MODE ----
   function startBotMatch() {
     setError('');
     setBotMyChoice(null);
@@ -271,11 +277,10 @@ export default function RpsPage() {
 
   function pickBotChoice(choice: Choice) {
     if (botStatus !== 'playing') return;
-    if (botMyChoice) return; // already picked this round
+    if (botMyChoice) return;
     setBotMyChoice(choice);
     setBotThinking(true);
 
-    // Bot "thinks" for ~700ms then reveals its choice
     setTimeout(() => {
       const botChoice = randomBotChoice();
       setBotOppChoice(botChoice);
@@ -286,7 +291,6 @@ export default function RpsPage() {
       const newMine = botMyScore + (result === 'a' ? 1 : 0);
       const newBot = botOppScore + (result === 'b' ? 1 : 0);
 
-      // Advance round after 2-second reveal
       setTimeout(() => {
         setBotMyScore(newMine);
         setBotOppScore(newBot);
@@ -296,7 +300,6 @@ export default function RpsPage() {
         if (isOver) {
           setBotStatus('finished');
           setBotWinner(newMine > newBot ? 'me' : 'bot');
-          // Keep choices visible on the finished screen
         } else {
           setBotRound(botRound + 1);
           setBotMyChoice(null);
@@ -330,7 +333,6 @@ export default function RpsPage() {
     setBotThinking(false);
   }
 
-  // ---- Derived (online) ----
   const myRole: 'A' | 'B' | null = useMemo(() => {
     if (!match || !userId) return null;
     if (match.player_a_id === userId) return 'A';
@@ -338,8 +340,10 @@ export default function RpsPage() {
     return null;
   }, [match, userId]);
 
-  const myChoice = myRole === 'A' ? match?.player_a_choice : match?.player_b_choice;
-  const opponentChoice = myRole === 'A' ? match?.player_b_choice : match?.player_a_choice;
+  const myChoice =
+    myRole === 'A' ? match?.player_a_choice : match?.player_b_choice;
+  const opponentChoice =
+    myRole === 'A' ? match?.player_b_choice : match?.player_a_choice;
   const myScore = myRole === 'A' ? match?.score_a : match?.score_b;
   const opponentScore = myRole === 'A' ? match?.score_b : match?.score_a;
 
@@ -359,7 +363,6 @@ export default function RpsPage() {
   return (
     <div className="min-h-screen bg-[#1a0b2e] p-4 sm:p-6 font-mono flex flex-col">
       <div className="w-full max-w-2xl mx-auto flex flex-col gap-4">
-
         {/* Header */}
         <div className="flex items-center justify-between shrink-0">
           <div>
@@ -368,7 +371,11 @@ export default function RpsPage() {
             </h1>
             <p
               className="font-bold"
-              style={{ fontSize: '10px', color: 'rgba(255,253,245,0.5)', marginTop: '2px' }}
+              style={{
+                fontSize: '10px',
+                color: 'rgba(255,253,245,0.5)',
+                marginTop: '2px',
+              }}
             >
               {isBotMode
                 ? 'playing vs bot 🤖 · best of 3'
@@ -385,10 +392,9 @@ export default function RpsPage() {
           </Link>
         </div>
 
-        {/* ---------- BOT MODE ---------- */}
+        {/* BOT MODE */}
         {isBotMode && (
           <>
-            {/* Scoreboard */}
             <div className="grid grid-cols-2 gap-3">
               <PlayerChip
                 label={email ? shortName(email) : 'you'}
@@ -406,7 +412,6 @@ export default function RpsPage() {
               />
             </div>
 
-            {/* Center panel */}
             <div
               className="border-4 border-black rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] flex items-center justify-center"
               style={{
@@ -469,7 +474,10 @@ export default function RpsPage() {
                       <span style={{ fontSize: '56px', lineHeight: 1 }}>
                         {EMOJI[botMyChoice]}
                       </span>
-                      <span className="font-bold" style={{ fontSize: '10px', color: 'rgba(0,0,0,0.55)' }}>
+                      <span
+                        className="font-bold"
+                        style={{ fontSize: '10px', color: 'rgba(0,0,0,0.55)' }}
+                      >
                         you
                       </span>
                     </div>
@@ -480,12 +488,18 @@ export default function RpsPage() {
                       <span style={{ fontSize: '56px', lineHeight: 1 }}>
                         {EMOJI[botOppChoice]}
                       </span>
-                      <span className="font-bold" style={{ fontSize: '10px', color: 'rgba(0,0,0,0.55)' }}>
+                      <span
+                        className="font-bold"
+                        style={{ fontSize: '10px', color: 'rgba(0,0,0,0.55)' }}
+                      >
                         bot
                       </span>
                     </div>
                   </div>
-                  <p className="font-black" style={{ fontSize: '16px', color: '#000', marginTop: '4px' }}>
+                  <p
+                    className="font-black"
+                    style={{ fontSize: '16px', color: '#000', marginTop: '4px' }}
+                  >
                     {(() => {
                       const r = resolveRound(botMyChoice, botOppChoice);
                       if (r === 'draw') return "🤝 it's a tie!";
@@ -507,7 +521,10 @@ export default function RpsPage() {
                   >
                     {botWinner === 'me' ? 'you beat the bot!' : 'bot wins this time'}
                   </p>
-                  <p className="font-bold" style={{ fontSize: '12px', color: 'rgba(0,0,0,0.55)' }}>
+                  <p
+                    className="font-bold"
+                    style={{ fontSize: '12px', color: 'rgba(0,0,0,0.55)' }}
+                  >
                     final score: {botMyScore} - {botOppScore}
                   </p>
                 </>
@@ -544,7 +561,7 @@ export default function RpsPage() {
           </>
         )}
 
-        {/* ---------- NO MATCH — LOBBY ---------- */}
+        {/* NO MATCH — LOBBY */}
         {!isBotMode && !match && (
           <div
             className="border-4 border-black rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] text-center flex flex-col items-center"
@@ -556,7 +573,11 @@ export default function RpsPage() {
             </p>
             <p
               className="font-bold"
-              style={{ fontSize: '11px', color: 'rgba(0,0,0,0.55)', maxWidth: '320px' }}
+              style={{
+                fontSize: '11px',
+                color: 'rgba(0,0,0,0.55)',
+                maxWidth: '320px',
+              }}
             >
               play against a friend, or warm up against the bot
             </p>
@@ -594,7 +615,7 @@ export default function RpsPage() {
           </div>
         )}
 
-        {/* ---------- WAITING FOR OPPONENT ---------- */}
+        {/* WAITING */}
         {!isBotMode && match && match.status === 'waiting' && (
           <div
             className="border-4 border-black rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] flex flex-col items-center"
@@ -608,7 +629,11 @@ export default function RpsPage() {
             </p>
             <p
               className="font-bold text-center"
-              style={{ fontSize: '11px', color: 'rgba(0,0,0,0.55)', maxWidth: '300px' }}
+              style={{
+                fontSize: '11px',
+                color: 'rgba(0,0,0,0.55)',
+                maxWidth: '300px',
+              }}
             >
               you're first. once a friend joins, you both pick at the same time
             </p>
@@ -622,7 +647,7 @@ export default function RpsPage() {
           </div>
         )}
 
-        {/* ---------- ONLINE: PLAYING / FINISHED ---------- */}
+        {/* ONLINE: PLAYING / FINISHED */}
         {!isBotMode && match && match.status !== 'waiting' && (
           <>
             <div className="grid grid-cols-2 gap-3">
@@ -718,7 +743,10 @@ export default function RpsPage() {
                       <span style={{ fontSize: '56px', lineHeight: 1 }}>
                         {EMOJI[myChoice]}
                       </span>
-                      <span className="font-bold" style={{ fontSize: '10px', color: 'rgba(0,0,0,0.55)' }}>
+                      <span
+                        className="font-bold"
+                        style={{ fontSize: '10px', color: 'rgba(0,0,0,0.55)' }}
+                      >
                         you
                       </span>
                     </div>
@@ -729,12 +757,18 @@ export default function RpsPage() {
                       <span style={{ fontSize: '56px', lineHeight: 1 }}>
                         {EMOJI[opponentChoice]}
                       </span>
-                      <span className="font-bold" style={{ fontSize: '10px', color: 'rgba(0,0,0,0.55)' }}>
+                      <span
+                        className="font-bold"
+                        style={{ fontSize: '10px', color: 'rgba(0,0,0,0.55)' }}
+                      >
                         opponent
                       </span>
                     </div>
                   </div>
-                  <p className="font-black" style={{ fontSize: '16px', color: '#000', marginTop: '4px' }}>
+                  <p
+                    className="font-black"
+                    style={{ fontSize: '16px', color: '#000', marginTop: '4px' }}
+                  >
                     {roundWinner === 'draw'
                       ? "🤝 it's a tie!"
                       : (roundWinner === 'a' && myRole === 'A') ||
@@ -756,7 +790,10 @@ export default function RpsPage() {
                   >
                     {match.winner === myRole ? 'you win the duel!' : 'you lost the duel'}
                   </p>
-                  <p className="font-bold" style={{ fontSize: '12px', color: 'rgba(0,0,0,0.55)' }}>
+                  <p
+                    className="font-bold"
+                    style={{ fontSize: '12px', color: 'rgba(0,0,0,0.55)' }}
+                  >
                     final score: {myScore} - {opponentScore}
                   </p>
                 </>
