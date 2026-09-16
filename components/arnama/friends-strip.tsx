@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { displayLabel, initialsFor } from '@/lib/use-profile';
+import { todayStr } from '@/lib/vibe';
 
 type Profile = {
   id: string;
@@ -12,6 +14,12 @@ type Profile = {
   created_at: string;
 };
 
+type Vibe = {
+  user_email: string;
+  emoji: string;
+  text: string | null;
+};
+
 const FALLBACK_AVATAR = ['#E2F0D9', '#FFD1DC', '#E6E6FA', '#FFF5BA', '#D4F0F0'];
 
 export function FriendsStrip() {
@@ -19,6 +27,7 @@ export function FriendsStrip() {
   const [myEmail, setMyEmail] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [onlineIds, setOnlineIds] = useState<string[]>([]);
+  const [vibes, setVibes] = useState<Record<string, Vibe>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -40,9 +49,46 @@ export function FriendsStrip() {
       });
   }, []);
 
+  // Load today's vibes for everyone
+  useEffect(() => {
+    const today = todayStr();
+
+    async function load() {
+      const { data, error } = await supabase
+        .from('vibe_checks')
+        .select('user_email, emoji, text')
+        .eq('date', today);
+
+      if (error) {
+        console.error('vibes load:', error);
+        return;
+      }
+      const map: Record<string, Vibe> = {};
+      (data ?? []).forEach((v: any) => {
+        map[v.user_email] = v;
+      });
+      setVibes(map);
+    }
+
+    load();
+
+    const ch = supabase
+      .channel('crew-vibes-strip')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'vibe_checks' },
+        () => load()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, []);
+
+  // Presence
   useEffect(() => {
     if (!myId || !myEmail) return;
-
     const channel = supabase.channel('arnama-online', {
       config: { presence: { key: myId } },
     });
@@ -65,15 +111,9 @@ export function FriendsStrip() {
 
   const onlineCount = onlineIds.length;
 
-  // GLASS — mint + top shine + inner highlight
   const cardStyle: React.CSSProperties = {
     background: `
-      linear-gradient(
-        180deg,
-        rgba(255, 255, 255, 0.5) 0%,
-        rgba(255, 255, 255, 0.15) 25%,
-        rgba(255, 255, 255, 0) 55%
-      ),
+      linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%),
       rgba(226, 240, 217, 0.88)
     `,
     backdropFilter: 'blur(20px) saturate(180%)',
@@ -105,7 +145,10 @@ export function FriendsStrip() {
         >
           THE CREW
         </h2>
-        <p className="text-sm font-bold" style={{ color: 'rgba(0,0,0,0.5)' }}>
+        <p
+          className="text-sm font-bold"
+          style={{ color: 'rgba(0,0,0,0.5)' }}
+        >
           no members yet
         </p>
       </div>
@@ -131,11 +174,7 @@ export function FriendsStrip() {
           className="flex items-center gap-1.5 rounded-full border-2 border-black px-2.5 py-1 text-xs font-bold"
           style={{
             background: `
-              linear-gradient(
-                180deg,
-                rgba(255, 255, 255, 0.6) 0%,
-                rgba(255, 255, 255, 0) 100%
-              ),
+              linear-gradient(180deg, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0) 100%),
               rgba(255, 253, 245, 0.9)
             `,
             color: '#000',
@@ -157,51 +196,98 @@ export function FriendsStrip() {
           const initials = initialsFor(p.email, p.display_name);
           const avatarBg =
             p.avatar_color || FALLBACK_AVATAR[idx % FALLBACK_AVATAR.length];
+          const vibe = vibes[p.email];
 
           return (
-            <li key={p.id} className="flex items-center gap-3">
-              <div className="relative">
-                {/* Avatar — glass shine */}
-                <div
-                  className="gloss-shine flex size-11 items-center justify-center rounded-xl border-4 font-display text-[0.6rem]"
-                  style={{
-                    background: `
-                      linear-gradient(
-                        180deg,
-                        rgba(255, 255, 255, 0.55) 0%,
-                        rgba(255, 255, 255, 0) 55%
-                      ),
-                      ${avatarBg}
-                    `,
-                    borderColor: '#000',
-                    color: '#000',
-                  }}
-                >
-                  {initials}
+            <li key={p.id}>
+              <Link
+                href={`/u/${p.id}`}
+                className="flex items-center gap-3 hover:-translate-y-0.5 active:translate-y-0.5 transition-transform"
+                style={{ textDecoration: 'none' }}
+              >
+                {/* Avatar + vibe sticker + online dot */}
+                <div className="relative" style={{ flexShrink: 0 }}>
+                  <div
+                    className="gloss-shine flex size-11 items-center justify-center rounded-xl border-4 font-display text-[0.6rem]"
+                    style={{
+                      background: `
+                        linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
+                        ${avatarBg}
+                      `,
+                      borderColor: '#000',
+                      color: '#000',
+                    }}
+                  >
+                    {initials}
+                  </div>
+
+                  {/* Vibe sticker — top-right of avatar */}
+                  {vibe && (
+                    <span
+                      title={vibe.text ?? ''}
+                      style={{
+                        position: 'absolute',
+                        top: '-8px',
+                        right: '-8px',
+                        width: '22px',
+                        height: '22px',
+                        borderRadius: '999px',
+                        border: '2px solid black',
+                        background: '#FFFDF5',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '12px',
+                        lineHeight: 1,
+                        boxShadow: '1.5px 1.5px 0 0 black',
+                        zIndex: 2,
+                      }}
+                    >
+                      {vibe.emoji}
+                    </span>
+                  )}
+
+                  {/* Online dot — bottom-right */}
+                  <span
+                    className="absolute"
+                    style={{
+                      bottom: '-4px',
+                      right: '-4px',
+                      width: '14px',
+                      height: '14px',
+                      borderRadius: '999px',
+                      border: '2px solid black',
+                      backgroundColor: isOnline ? '#7FB89B' : '#D8D0C0',
+                    }}
+                  />
                 </div>
-                <span
-                  className="absolute -bottom-1 -right-1 size-4 rounded-full border-2 border-black"
-                  style={{
-                    backgroundColor: isOnline ? '#7FB89B' : '#D8D0C0',
-                  }}
-                />
-              </div>
-              <div className="min-w-0">
-                <p
-                  className="truncate text-sm font-bold"
-                  style={{ color: '#000' }}
-                >
-                  {isMe ? `${label} (you)` : label}
-                </p>
-                <p
-                  className="text-xs font-semibold"
-                  style={{
-                    color: isOnline ? '#3A7A5E' : 'rgba(0,0,0,0.45)',
-                  }}
-                >
-                  {isOnline ? 'in the portal' : 'away'}
-                </p>
-              </div>
+
+                <div className="min-w-0 flex-1">
+                  <p
+                    className="truncate text-sm font-bold"
+                    style={{ color: '#000' }}
+                  >
+                    {isMe ? `${label} (you)` : label}
+                  </p>
+                  <p
+                    className="truncate text-xs font-semibold"
+                    style={{
+                      color: vibe?.text
+                        ? '#7A4A9E'
+                        : isOnline
+                        ? '#3A7A5E'
+                        : 'rgba(0,0,0,0.45)',
+                      fontStyle: vibe?.text ? 'italic' : 'normal',
+                    }}
+                  >
+                    {vibe?.text
+                      ? `"${vibe.text}"`
+                      : isOnline
+                      ? 'in the portal'
+                      : 'away'}
+                  </p>
+                </div>
+              </Link>
             </li>
           );
         })}

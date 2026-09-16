@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { fireConfetti } from '@/lib/confetti';
 
 type Choice = 'rock' | 'paper' | 'scissors';
 
@@ -75,6 +76,8 @@ export default function RpsPage() {
   const [botWinner, setBotWinner] = useState<'me' | 'bot' | null>(null);
   const [botThinking, setBotThinking] = useState(false);
 
+  const confettiFiredRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       const user = data.user;
@@ -136,6 +139,17 @@ export default function RpsPage() {
     const timer = setTimeout(async () => {
       if (isMatchOver) {
         const matchWinner = newScoreA > newScoreB ? 'A' : 'B';
+
+        // 🎉 confetti if you're the winner
+        const iAmA = match.player_a_id === userId;
+        const iAmB = match.player_b_id === userId;
+        const imWinner =
+          (matchWinner === 'A' && iAmA) || (matchWinner === 'B' && iAmB);
+        if (imWinner && !confettiFiredRef.current.has(match.id)) {
+          confettiFiredRef.current.add(match.id);
+          setTimeout(() => fireConfetti({ count: 110 }), 200);
+        }
+
         await supabase
           .from('arcade_rps')
           .update({
@@ -257,7 +271,6 @@ export default function RpsPage() {
 
   async function playAgain() {
     if (!match) return;
-    // KEEP the finished match as history, start a fresh one
     setMatch(null);
     setTimeout(() => quickMatch(), 100);
   }
@@ -287,7 +300,6 @@ export default function RpsPage() {
       setBotThinking(false);
 
       const result = resolveRound(choice, botChoice);
-
       const newMine = botMyScore + (result === 'a' ? 1 : 0);
       const newBot = botOppScore + (result === 'b' ? 1 : 0);
 
@@ -300,6 +312,11 @@ export default function RpsPage() {
         if (isOver) {
           setBotStatus('finished');
           setBotWinner(newMine > newBot ? 'me' : 'bot');
+          // 🎉 confetti when you beat the bot
+          if (newMine > newBot && !confettiFiredRef.current.has('bot-session')) {
+            confettiFiredRef.current.add('bot-session');
+            setTimeout(() => fireConfetti({ count: 110 }), 100);
+          }
         } else {
           setBotRound(botRound + 1);
           setBotMyChoice(null);
@@ -318,6 +335,8 @@ export default function RpsPage() {
     setBotStatus('playing');
     setBotWinner(null);
     setBotThinking(false);
+    // allow confetti again next round
+    confettiFiredRef.current.delete('bot-session');
   }
 
   function leaveBotMatch() {
@@ -331,6 +350,7 @@ export default function RpsPage() {
     setBotStatus('playing');
     setBotWinner(null);
     setBotThinking(false);
+    confettiFiredRef.current.delete('bot-session');
   }
 
   const myRole: 'A' | 'B' | null = useMemo(() => {
@@ -363,7 +383,6 @@ export default function RpsPage() {
   return (
     <div className="min-h-screen bg-[#1a0b2e] p-4 sm:p-6 font-mono flex flex-col">
       <div className="w-full max-w-2xl mx-auto flex flex-col gap-4">
-        {/* Header */}
         <div className="flex items-center justify-between shrink-0">
           <div>
             <h1 className="text-xl sm:text-2xl font-black text-white">
@@ -392,7 +411,6 @@ export default function RpsPage() {
           </Link>
         </div>
 
-        {/* BOT MODE */}
         {isBotMode && (
           <>
             <div className="grid grid-cols-2 gap-3">
@@ -474,10 +492,7 @@ export default function RpsPage() {
                       <span style={{ fontSize: '56px', lineHeight: 1 }}>
                         {EMOJI[botMyChoice]}
                       </span>
-                      <span
-                        className="font-bold"
-                        style={{ fontSize: '10px', color: 'rgba(0,0,0,0.55)' }}
-                      >
+                      <span className="font-bold" style={{ fontSize: '10px', color: 'rgba(0,0,0,0.55)' }}>
                         you
                       </span>
                     </div>
@@ -488,18 +503,12 @@ export default function RpsPage() {
                       <span style={{ fontSize: '56px', lineHeight: 1 }}>
                         {EMOJI[botOppChoice]}
                       </span>
-                      <span
-                        className="font-bold"
-                        style={{ fontSize: '10px', color: 'rgba(0,0,0,0.55)' }}
-                      >
+                      <span className="font-bold" style={{ fontSize: '10px', color: 'rgba(0,0,0,0.55)' }}>
                         bot
                       </span>
                     </div>
                   </div>
-                  <p
-                    className="font-black"
-                    style={{ fontSize: '16px', color: '#000', marginTop: '4px' }}
-                  >
+                  <p className="font-black" style={{ fontSize: '16px', color: '#000', marginTop: '4px' }}>
                     {(() => {
                       const r = resolveRound(botMyChoice, botOppChoice);
                       if (r === 'draw') return "🤝 it's a tie!";
@@ -521,10 +530,7 @@ export default function RpsPage() {
                   >
                     {botWinner === 'me' ? 'you beat the bot!' : 'bot wins this time'}
                   </p>
-                  <p
-                    className="font-bold"
-                    style={{ fontSize: '12px', color: 'rgba(0,0,0,0.55)' }}
-                  >
+                  <p className="font-bold" style={{ fontSize: '12px', color: 'rgba(0,0,0,0.55)' }}>
                     final score: {botMyScore} - {botOppScore}
                   </p>
                 </>
@@ -561,7 +567,6 @@ export default function RpsPage() {
           </>
         )}
 
-        {/* NO MATCH — LOBBY */}
         {!isBotMode && !match && (
           <div
             className="border-4 border-black rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] text-center flex flex-col items-center"
@@ -573,11 +578,7 @@ export default function RpsPage() {
             </p>
             <p
               className="font-bold"
-              style={{
-                fontSize: '11px',
-                color: 'rgba(0,0,0,0.55)',
-                maxWidth: '320px',
-              }}
+              style={{ fontSize: '11px', color: 'rgba(0,0,0,0.55)', maxWidth: '320px' }}
             >
               play against a friend, or warm up against the bot
             </p>
@@ -615,7 +616,6 @@ export default function RpsPage() {
           </div>
         )}
 
-        {/* WAITING */}
         {!isBotMode && match && match.status === 'waiting' && (
           <div
             className="border-4 border-black rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] flex flex-col items-center"
@@ -629,11 +629,7 @@ export default function RpsPage() {
             </p>
             <p
               className="font-bold text-center"
-              style={{
-                fontSize: '11px',
-                color: 'rgba(0,0,0,0.55)',
-                maxWidth: '300px',
-              }}
+              style={{ fontSize: '11px', color: 'rgba(0,0,0,0.55)', maxWidth: '300px' }}
             >
               you're first. once a friend joins, you both pick at the same time
             </p>
@@ -647,7 +643,6 @@ export default function RpsPage() {
           </div>
         )}
 
-        {/* ONLINE: PLAYING / FINISHED */}
         {!isBotMode && match && match.status !== 'waiting' && (
           <>
             <div className="grid grid-cols-2 gap-3">
@@ -743,10 +738,7 @@ export default function RpsPage() {
                       <span style={{ fontSize: '56px', lineHeight: 1 }}>
                         {EMOJI[myChoice]}
                       </span>
-                      <span
-                        className="font-bold"
-                        style={{ fontSize: '10px', color: 'rgba(0,0,0,0.55)' }}
-                      >
+                      <span className="font-bold" style={{ fontSize: '10px', color: 'rgba(0,0,0,0.55)' }}>
                         you
                       </span>
                     </div>
@@ -757,18 +749,12 @@ export default function RpsPage() {
                       <span style={{ fontSize: '56px', lineHeight: 1 }}>
                         {EMOJI[opponentChoice]}
                       </span>
-                      <span
-                        className="font-bold"
-                        style={{ fontSize: '10px', color: 'rgba(0,0,0,0.55)' }}
-                      >
+                      <span className="font-bold" style={{ fontSize: '10px', color: 'rgba(0,0,0,0.55)' }}>
                         opponent
                       </span>
                     </div>
                   </div>
-                  <p
-                    className="font-black"
-                    style={{ fontSize: '16px', color: '#000', marginTop: '4px' }}
-                  >
+                  <p className="font-black" style={{ fontSize: '16px', color: '#000', marginTop: '4px' }}>
                     {roundWinner === 'draw'
                       ? "🤝 it's a tie!"
                       : (roundWinner === 'a' && myRole === 'A') ||
@@ -790,10 +776,7 @@ export default function RpsPage() {
                   >
                     {match.winner === myRole ? 'you win the duel!' : 'you lost the duel'}
                   </p>
-                  <p
-                    className="font-bold"
-                    style={{ fontSize: '12px', color: 'rgba(0,0,0,0.55)' }}
-                  >
+                  <p className="font-bold" style={{ fontSize: '12px', color: 'rgba(0,0,0,0.55)' }}>
                     final score: {myScore} - {opponentScore}
                   </p>
                 </>

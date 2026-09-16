@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { SwipeCarousel } from '@/components/arnama/swipe-carousel';
+import { fireConfetti } from '@/lib/confetti';
 
 type Wish = {
   id: string;
@@ -51,16 +52,13 @@ export default function WishesPage() {
   const [myLikes, setMyLikes] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
 
-  // 0 = wishes, 1 = liked, 2 = top
   const [tabIndex, setTabIndex] = useState(0);
 
   const [content, setContent] = useState('');
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState('');
+  const myWishCountRef = useRef<number | null>(null);
 
-  // =========================
-  // AUTH
-  // =========================
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       const user = data.user;
@@ -72,6 +70,14 @@ export default function WishesPage() {
       } else {
         setLoading(false);
         supabase
+          .from('wishes')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_email', e)
+          .then(({ count }) => {
+            myWishCountRef.current =
+              typeof count === 'number' ? count : 0;
+          });
+        supabase
           .from('profiles')
           .update({ last_seen_wishes_at: new Date().toISOString() })
           .eq('id', user!.id)
@@ -82,9 +88,6 @@ export default function WishesPage() {
     });
   }, []);
 
-  // =========================
-  // LOAD WISHES
-  // =========================
   useEffect(() => {
     if (!email) return;
     supabase
@@ -97,9 +100,6 @@ export default function WishesPage() {
       });
   }, [email]);
 
-  // =========================
-  // LOAD LIKES
-  // =========================
   useEffect(() => {
     if (!email) return;
     supabase
@@ -121,9 +121,6 @@ export default function WishesPage() {
       });
   }, [email]);
 
-  // =========================
-  // REALTIME
-  // =========================
   useEffect(() => {
     if (!email) return;
     const channel = supabase
@@ -177,9 +174,6 @@ export default function WishesPage() {
     };
   }, [email]);
 
-  // =========================
-  // ACTIONS
-  // =========================
   async function handlePost(e: React.FormEvent) {
     e.preventDefault();
     setError('');
@@ -202,6 +196,12 @@ export default function WishesPage() {
         return [data as Wish, ...prev];
       });
       setContent('');
+      if (myWishCountRef.current === 0) {
+        myWishCountRef.current = 1;
+        fireConfetti({ count: 90 });
+      } else if (myWishCountRef.current !== null) {
+        myWishCountRef.current += 1;
+      }
     }
     setPosting(false);
   }
@@ -252,9 +252,6 @@ export default function WishesPage() {
     );
   }
 
-  // ====================================
-  // WISH CARD COMPONENT (reused everywhere)
-  // ====================================
   function renderWishCard(
     w: Wish,
     opts: { showRank?: number; isTopOne?: boolean } = {}
@@ -288,7 +285,6 @@ export default function WishesPage() {
           position: 'relative',
         }}
       >
-        {/* Rank badge for top slide */}
         {typeof opts.showRank === 'number' && opts.showRank > 0 && (
           <span
             className="gloss-shine"
@@ -342,10 +338,7 @@ export default function WishesPage() {
         >
           <span
             className="font-bold uppercase tracking-wider"
-            style={{
-              fontSize: '9px',
-              color: 'rgba(0,0,0,0.5)',
-            }}
+            style={{ fontSize: '9px', color: 'rgba(0,0,0,0.5)' }}
           >
             {timeAgo(w.created_at)}
           </span>
@@ -365,10 +358,7 @@ export default function WishesPage() {
             <span style={{ fontSize: '12px', lineHeight: 1 }}>
               {liked ? '❤️' : '🤍'}
             </span>
-            <span
-              className="font-black"
-              style={{ fontSize: '11px', color: '#000' }}
-            >
+            <span className="font-black" style={{ fontSize: '11px', color: '#000' }}>
               {count}
             </span>
           </button>
@@ -398,9 +388,6 @@ export default function WishesPage() {
     );
   }
 
-  // ====================================
-  // SLIDE 1: WISHES (main feed)
-  // ====================================
   const wishesSlide = (
     <div
       style={{
@@ -410,14 +397,7 @@ export default function WishesPage() {
         WebkitOverflowScrolling: 'touch',
       }}
     >
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '14px',
-        }}
-      >
-        {/* Composer */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
         <form
           onSubmit={handlePost}
           className="border-4 border-black rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] flex flex-col shrink-0"
@@ -483,7 +463,6 @@ export default function WishesPage() {
           )}
         </form>
 
-        {/* Wishes feed */}
         {wishes.length === 0 ? (
           <div
             className="border-4 border-black bg-[#FFFDF5] rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] text-center shrink-0"
@@ -494,13 +473,7 @@ export default function WishesPage() {
             </p>
           </div>
         ) : (
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '14px',
-            }}
-          >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             {wishes.map((w) => renderWishCard(w))}
           </div>
         )}
@@ -508,9 +481,6 @@ export default function WishesPage() {
     </div>
   );
 
-  // ====================================
-  // SLIDE 2: LIKED (wishes you hearted)
-  // ====================================
   const likedWishes = wishes.filter((w) => myLikes.has(w.id));
 
   const likedSlide = (
@@ -522,14 +492,7 @@ export default function WishesPage() {
         WebkitOverflowScrolling: 'touch',
       }}
     >
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '14px',
-        }}
-      >
-        {/* Header card */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
         <div
           className="border-4 border-black rounded-2xl shrink-0"
           style={{
@@ -610,16 +573,10 @@ export default function WishesPage() {
         {likedWishes.length === 0 ? (
           <div
             className="border-4 border-black bg-[#FFFDF5] rounded-2xl text-center"
-            style={{
-              padding: '40px 20px',
-              boxShadow: '6px 6px 0 0 black',
-            }}
+            style={{ padding: '40px 20px', boxShadow: '6px 6px 0 0 black' }}
           >
             <div style={{ fontSize: '36px', marginBottom: '10px' }}>🤍</div>
-            <p
-              className="text-black font-bold"
-              style={{ fontSize: '13px', margin: 0 }}
-            >
+            <p className="text-black font-bold" style={{ fontSize: '13px', margin: 0 }}>
               nothing liked yet
             </p>
             <p
@@ -630,13 +587,7 @@ export default function WishesPage() {
             </p>
           </div>
         ) : (
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '14px',
-            }}
-          >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             {likedWishes.map((w) => renderWishCard(w))}
           </div>
         )}
@@ -644,9 +595,6 @@ export default function WishesPage() {
     </div>
   );
 
-  // ====================================
-  // SLIDE 3: TOP (most-liked)
-  // ====================================
   const rankedWishes = [...wishes]
     .map((w) => ({ wish: w, likes: likeCounts[w.id] ?? 0 }))
     .filter((x) => x.likes > 0)
@@ -662,14 +610,7 @@ export default function WishesPage() {
         WebkitOverflowScrolling: 'touch',
       }}
     >
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '18px',
-        }}
-      >
-        {/* Header card */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
         <div
           className="border-4 border-black rounded-2xl shrink-0"
           style={{
@@ -696,9 +637,7 @@ export default function WishesPage() {
               height: '52px',
               borderRadius: '999px',
               border: '4px solid black',
-              background: `
-                linear-gradient(180deg, #FFD700 0%, #FFA500 100%)
-              `,
+              background: `linear-gradient(180deg, #FFD700 0%, #FFA500 100%)`,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -739,16 +678,10 @@ export default function WishesPage() {
         {rankedWishes.length === 0 ? (
           <div
             className="border-4 border-black bg-[#FFFDF5] rounded-2xl text-center"
-            style={{
-              padding: '40px 20px',
-              boxShadow: '6px 6px 0 0 black',
-            }}
+            style={{ padding: '40px 20px', boxShadow: '6px 6px 0 0 black' }}
           >
             <div style={{ fontSize: '36px', marginBottom: '10px' }}>👑</div>
-            <p
-              className="text-black font-bold"
-              style={{ fontSize: '13px', margin: 0 }}
-            >
+            <p className="text-black font-bold" style={{ fontSize: '13px', margin: 0 }}>
               no liked wishes yet
             </p>
             <p
@@ -759,13 +692,7 @@ export default function WishesPage() {
             </p>
           </div>
         ) : (
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '20px',
-            }}
-          >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             {rankedWishes.map((item, index) =>
               renderWishCard(item.wish, {
                 showRank: index + 1,
@@ -784,7 +711,6 @@ export default function WishesPage() {
         className="w-full max-w-3xl h-full flex flex-col p-3 sm:p-6 gap-3 sm:gap-4"
         style={{ minHeight: 0 }}
       >
-        {/* Header */}
         <div className="flex items-center justify-between shrink-0 gap-2">
           <div className="flex items-center gap-3 min-w-0">
             <div
@@ -819,7 +745,6 @@ export default function WishesPage() {
           </Link>
         </div>
 
-        {/* CAROUSEL */}
         <SwipeCarousel
           mode="fill"
           index={tabIndex}

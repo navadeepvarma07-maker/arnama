@@ -39,7 +39,10 @@ type Profile = { id: string; email: string };
 
 type ContextMenu = { message: DM; x: number; y: number } | null;
 
+type ReactionsMap = Record<string, Record<string, string[]>>;
+
 const NOTE_COLORS = ['#FFF5BA', '#FFD1DC', '#E2F0D9', '#E6E6FA', '#D4F0F0'];
+const REACTION_EMOJIS = ['❤️', '🔥', '😂', '👍', '😮', '😭'];
 
 function colorFor(id: string): string {
   let hash = 0;
@@ -83,7 +86,6 @@ function VaultContent() {
     ? 'rgba(255,255,255,0.65)'
     : 'rgba(0,0,0,0.4)';
 
-  // 0 = messages (default), 1 = notes
   const [tabIndex, setTabIndex] = useState(0);
   const [pendingThreadId, setPendingThreadId] = useState<string | null>(
     threadParam
@@ -124,12 +126,15 @@ function VaultContent() {
   const [contextMenu, setContextMenu] = useState<ContextMenu>(null);
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
 
+  // 🎯 REACTIONS
+  const [reactions, setReactions] = useState<ReactionsMap>({});
+
   const dmBottomRef = useRef<HTMLDivElement>(null);
   const dmScrollRef = useRef<HTMLDivElement>(null);
   const dmAtBottomRef = useRef(true);
   const dmInitialLoadDone = useRef(false);
 
-  // Deep link → messages slide + open thread
+  // Deep link
   useEffect(() => {
     if (threadParam) {
       setPendingThreadId(threadParam);
@@ -323,6 +328,79 @@ function VaultContent() {
     };
   }, [userId, activeThread]);
 
+  // 🎯 LOAD REACTIONS
+  useEffect(() => {
+    if (!email) return;
+    supabase
+      .from('reactions')
+      .select('message_id, user_email, emoji')
+      .eq('source', 'vault')
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('reactions load:', error);
+          return;
+        }
+        const map: ReactionsMap = {};
+        (data ?? []).forEach((r: any) => {
+          const mid = String(r.message_id);
+          if (!map[mid]) map[mid] = {};
+          if (!map[mid][r.emoji]) map[mid][r.emoji] = [];
+          map[mid][r.emoji].push(r.user_email);
+        });
+        setReactions(map);
+      });
+  }, [email]);
+
+  // 🎯 REALTIME REACTIONS
+  useEffect(() => {
+    if (!email) return;
+    const channel = supabase
+      .channel('vault-reactions-live')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'reactions' },
+        (payload) => {
+          const r = payload.new as any;
+          if (r.source !== 'vault') return;
+          const mid = String(r.message_id);
+          setReactions((prev) => {
+            const next = { ...prev };
+            const byEmoji = { ...(next[mid] ?? {}) };
+            const emails = new Set(byEmoji[r.emoji] ?? []);
+            emails.add(r.user_email);
+            byEmoji[r.emoji] = Array.from(emails);
+            next[mid] = byEmoji;
+            return next;
+          });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'reactions' },
+        (payload) => {
+          const r = payload.old as any;
+          if (r.source !== 'vault') return;
+          const mid = String(r.message_id);
+          setReactions((prev) => {
+            const next = { ...prev };
+            const byEmoji = { ...(next[mid] ?? {}) };
+            const emails = (byEmoji[r.emoji] ?? []).filter(
+              (e) => e !== r.user_email
+            );
+            if (emails.length === 0) delete byEmoji[r.emoji];
+            else byEmoji[r.emoji] = emails;
+            if (Object.keys(byEmoji).length === 0) delete next[mid];
+            else next[mid] = byEmoji;
+            return next;
+          });
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [email]);
+
   function handleDmScroll() {
     const el = dmScrollRef.current;
     if (!el) return;
@@ -508,13 +586,58 @@ function VaultContent() {
     await supabase.from('profiles').update({ vault_bg: bg }).eq('id', user.id);
   }
 
+  // 🎯 REACTIONS
+  function hasMyReaction(messageId: string, emoji: string): boolean {
+    if (!email) return false;
+    const mid = String(messageId);
+    return (reactions[mid]?.[emoji] ?? []).includes(email);
+  }
+
+  async function toggleReaction(messageId: string, emoji: string) {
+    if (!email) return;
+    const mid = String(messageId);
+    const mine = hasMyReaction(messageId, emoji);
+
+    setReactions((prev) => {
+      const next = { ...prev };
+      const byEmoji = { ...(next[mid] ?? {}) };
+      const emails = new Set(byEmoji[emoji] ?? []);
+      if (mine) emails.delete(email);
+      else emails.add(email);
+      if (emails.size === 0) delete byEmoji[emoji];
+      else byEmoji[emoji] = Array.from(emails);
+      if (Object.keys(byEmoji).length === 0) delete next[mid];
+      else next[mid] = byEmoji;
+      return next;
+    });
+
+    if (mine) {
+      const { error } = await supabase
+        .from('reactions')
+        .delete()
+        .eq('source', 'vault')
+        .eq('message_id', mid)
+        .eq('user_email', email)
+        .eq('emoji', emoji);
+      if (error) console.error('unreact failed:', error);
+    } else {
+      const { error } = await supabase.from('reactions').insert({
+        source: 'vault',
+        message_id: mid,
+        user_email: email,
+        emoji,
+      });
+      if (error) console.error('react failed:', error);
+    }
+  }
+
   // Context menu
   function openContextMenu(message: DM, x: number, y: number) {
-    const menuWidth = 180,
-      menuHeight = 180;
+    const menuWidth = 240,
+      menuHeight = 260;
     const safeX = Math.min(x, window.innerWidth - menuWidth - 8);
     const safeY = Math.min(y, window.innerHeight - menuHeight - 8);
-    setContextMenu({ message, x: safeX, y: safeY });
+    setContextMenu({ message, x: Math.max(8, safeX), y: Math.max(8, safeY) });
   }
   function handleRightClick(e: React.MouseEvent, message: DM) {
     e.preventDefault();
@@ -747,6 +870,12 @@ function VaultContent() {
                     const isEditing = editingId === m.id;
                     const repliedTo = findDmById(m.reply_to_id);
                     const isHighlighted = highlight?.id === m.id;
+
+                    // 🎯 reactions for this DM
+                    const msgReactions = reactions[String(m.id)] ?? {};
+                    const reactionEntries = Object.entries(msgReactions)
+                      .filter(([, emails]) => emails.length > 0)
+                      .sort((a, b) => b[1].length - a[1].length);
 
                     return (
                       <div
@@ -981,6 +1110,64 @@ function VaultContent() {
                               </p>
                             )}
                           </div>
+
+                          {/* 🎯 REACTION PILLS */}
+                          {reactionEntries.length > 0 && (
+                            <div
+                              style={{
+                                display: 'flex',
+                                flexWrap: 'wrap',
+                                gap: '4px',
+                                marginTop: '4px',
+                                paddingLeft: mine ? '0' : '2px',
+                                paddingRight: mine ? '2px' : '0',
+                                justifyContent: mine
+                                  ? 'flex-end'
+                                  : 'flex-start',
+                              }}
+                            >
+                              {reactionEntries.map(([emoji, emails]) => {
+                                const isMine =
+                                  !!email && emails.includes(email);
+                                return (
+                                  <button
+                                    key={emoji}
+                                    onClick={() => toggleReaction(m.id, emoji)}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '3px',
+                                      padding: '2px 8px',
+                                      border: '2px solid black',
+                                      borderRadius: '999px',
+                                      background: isMine
+                                        ? 'linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #FF8BA7'
+                                        : 'linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #FFFDF5',
+                                      cursor: 'pointer',
+                                      boxShadow: '2px 2px 0 0 black',
+                                      fontSize: '11px',
+                                      fontWeight: 900,
+                                      color: '#000',
+                                      lineHeight: 1.2,
+                                    }}
+                                    aria-label={`${emoji} ${emails.length}`}
+                                  >
+                                    <span
+                                      style={{
+                                        fontSize: '12px',
+                                        lineHeight: 1,
+                                      }}
+                                    >
+                                      {emoji}
+                                    </span>
+                                    <span style={{ fontSize: '10px' }}>
+                                      {emails.length}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -1684,7 +1871,9 @@ function VaultContent() {
         <SwipeCarousel
           mode="fill"
           index={tabIndex}
-          onIndexChange={setTabIndex}
+          onIndexChange={(i) => {
+            setTabIndex(i);
+          }}
           labels={[
             `💬 messages${totalUnread > 0 ? ` · ${totalUnread}` : ''}`,
             '🔒 notes',
@@ -1693,7 +1882,7 @@ function VaultContent() {
         />
       </div>
 
-      {/* CONTEXT MENU */}
+      {/* CONTEXT MENU — with reactions */}
       {contextMenu && (
         <div
           onClick={(e) => e.stopPropagation()}
@@ -1704,15 +1893,64 @@ function VaultContent() {
             zIndex: 500,
             backgroundColor: '#FFFDF5',
             border: '3px solid black',
-            borderRadius: '14px',
+            borderRadius: '18px',
             boxShadow: '5px 5px 0 0 black',
-            padding: '6px',
+            padding: '8px',
             display: 'flex',
             flexDirection: 'column',
-            gap: '2px',
-            minWidth: '160px',
+            gap: '4px',
+            minWidth: '220px',
+            maxWidth: 'calc(100vw - 16px)',
           }}
         >
+          {/* Reaction row */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '2px',
+              padding: '4px 4px 8px',
+              borderBottom: '3px dashed rgba(0,0,0,0.18)',
+              marginBottom: '2px',
+            }}
+          >
+            {REACTION_EMOJIS.map((emoji) => {
+              const active = hasMyReaction(contextMenu.message.id, emoji);
+              return (
+                <button
+                  key={emoji}
+                  onClick={() => {
+                    toggleReaction(contextMenu.message.id, emoji);
+                    closeContextMenu();
+                  }}
+                  style={{
+                    width: '34px',
+                    height: '34px',
+                    borderRadius: '999px',
+                    border: active
+                      ? '2px solid black'
+                      : '2px solid transparent',
+                    background: active
+                      ? 'linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #FF8BA7'
+                      : 'transparent',
+                    cursor: 'pointer',
+                    fontSize: '18px',
+                    lineHeight: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: 0,
+                    boxShadow: active ? '2px 2px 0 0 black' : 'none',
+                  }}
+                  aria-label={`react ${emoji}`}
+                >
+                  {emoji}
+                </button>
+              );
+            })}
+          </div>
+
           <button
             onClick={() => {
               setReplyTo(contextMenu.message);

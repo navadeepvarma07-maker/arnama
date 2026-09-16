@@ -1,9 +1,9 @@
 import AuthWidget from '@/components/auth-widget';
-import { PortalHeader } from '@/components/arnama/portal-header'
-import { PlayerCard } from '@/components/arnama/player-card'
-import { FriendsStrip } from '@/components/arnama/friends-strip'
-import { ArcadeGrid } from '@/components/arnama/arcade-grid'
-import { ActivityTicker } from '@/components/arnama/activity-ticker'
+import { PortalHeader } from '@/components/arnama/portal-header';
+import { PlayerCard } from '@/components/arnama/player-card';
+import { FriendsStrip } from '@/components/arnama/friends-strip';
+import { ArcadeGrid } from '@/components/arnama/arcade-grid';
+import { ActivityTicker } from '@/components/arnama/activity-ticker';
 
 export default function Page() {
   return (
@@ -26,5 +26,5 @@ export default function Page() {
         arnama · members only · be nice to each other
       </footer>
     </main>
-  )
+  );
 }

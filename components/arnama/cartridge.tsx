@@ -39,6 +39,8 @@ export function Cartridge({
   const tiltClass =
     tilt === 'left' ? '-rotate-1' : tilt === 'right' ? 'rotate-1' : 'rotate-0';
 
+  const hasBadge = typeof badge === 'number' && badge > 0;
+
   return (
     <button
       type="button"
@@ -47,7 +49,9 @@ export function Cartridge({
         large ? 'sm:col-span-2' : '',
         tiltClass
       )}
+      style={{ overflow: 'visible' }}
     >
+      {/* Cartridge body */}
       <span
         className={cn(
           'relative flex h-full flex-col gap-3 rounded-3xl border-4 border-ink p-4 shadow-brutal',
@@ -58,7 +62,7 @@ export function Cartridge({
         )}
         style={{ overflow: 'hidden' }}
       >
-        {/* GLASS TOP SHINE — subtle white gradient from top */}
+        {/* GLASS TOP SHINE */}
         <span
           aria-hidden
           style={{
@@ -78,7 +82,7 @@ export function Cartridge({
           }}
         />
 
-        {/* GLASS INNER HIGHLIGHT — thin bright line on top edge */}
+        {/* INNER HIGHLIGHT */}
         <span
           aria-hidden
           style={{
@@ -95,7 +99,7 @@ export function Cartridge({
           }}
         />
 
-        {/* Everything below sits above the shine layers */}
+        {/* Grip ridges */}
         <span
           aria-hidden
           className="relative flex gap-1.5"
@@ -124,7 +128,7 @@ export function Cartridge({
           />
         </span>
 
-        {/* Icon sticker — has gloss-shine already */}
+        {/* Icon sticker */}
         <span
           className={cn(
             'gloss-shine relative flex items-center justify-center rounded-2xl border-4 border-ink bg-cream',
@@ -151,6 +155,7 @@ export function Cartridge({
           />
         </span>
 
+        {/* Title + subtitle */}
         <span
           className="mt-auto flex flex-col gap-1 relative"
           style={{ zIndex: 2 }}
@@ -174,16 +179,27 @@ export function Cartridge({
           )}
           style={{ zIndex: 2 }}
         />
-
-        {typeof badge === 'number' && badge > 0 && (
-          <span
-            className="badge-pulse absolute -right-3 -top-3 flex size-9 items-center justify-center rounded-full border-4 border-ink bg-cream font-display text-[0.6rem] text-ink shadow-brutal-sm"
-            style={{ zIndex: 3 }}
-          >
-            {badge > 9 ? '9+' : badge}
-          </span>
-        )}
       </span>
+
+      {/* 🎯 BADGE — lives OUTSIDE the clipped body so it can float on the corner */}
+      {hasBadge && (
+        <span
+          className="badge-pulse pointer-events-none absolute flex items-center justify-center rounded-full border-4 border-ink bg-cream font-display"
+          style={{
+            top: '-10px',
+            right: '-10px',
+            minWidth: '32px',
+            height: '32px',
+            padding: '0 4px',
+            fontSize: '10px',
+            color: '#000',
+            boxShadow: '3px 3px 0 0 black',
+            zIndex: 20,
+          }}
+        >
+          {badge! > 9 ? '9+' : badge}
+        </span>
+      )}
     </button>
   );
 }

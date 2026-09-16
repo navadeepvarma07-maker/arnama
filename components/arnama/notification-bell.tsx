@@ -6,7 +6,7 @@ import { Bell } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useProfile } from '@/lib/use-profile';
 import { playDing } from '@/lib/ding';
-
+import { useTabBadge } from '@/lib/use-tab-badge';
 type Notif = {
   id: string;
   kind: 'chat' | 'wish' | 'photo' | 'plan' | 'dm' | 'tune' | 'arcade';
@@ -295,7 +295,7 @@ export function NotificationBell() {
     (i) => new Date(i.at).getTime() > new Date(lastSeen).getTime()
   ).length;
   const hasUnread = unreadCount > 0;
-
+  useTabBadge(unreadCount);
   async function handleOpen() {
     const nextOpen = !open;
     setOpen(nextOpen);

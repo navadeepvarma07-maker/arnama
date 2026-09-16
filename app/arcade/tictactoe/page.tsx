@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { fireConfetti } from '@/lib/confetti';
 
 type Match = {
   id: string;
@@ -83,6 +84,9 @@ export default function TicTacToePage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
+  // 🎉 prevents confetti from firing twice for the same game
+  const confettiFiredRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       const user = data.user;
@@ -137,6 +141,9 @@ export default function TicTacToePage() {
         const nextBoard = [...prev.board];
         nextBoard[move] = 'O';
         const winner = detectWinner(nextBoard);
+
+        // 🎉 if bot wins and that's you (i.e. you're X and O wins → actually bot wins, no confetti)
+        // Confetti only fires when YOU win, handled in tapCell
 
         const next: Match = {
           ...prev,
@@ -257,6 +264,15 @@ export default function TicTacToePage() {
 
     setMatch((prev) => (prev ? ({ ...prev, ...updates } as Match) : prev));
 
+    // 🎉 confetti when you win
+    if (winner && winner !== 'draw' && winner === myMark) {
+      const key = match.id;
+      if (!confettiFiredRef.current.has(key)) {
+        confettiFiredRef.current.add(key);
+        setTimeout(() => fireConfetti({ count: 110 }), 200);
+      }
+    }
+
     if (isBotMode) return;
 
     const { error } = await supabase
@@ -284,7 +300,6 @@ export default function TicTacToePage() {
   function playAgain() {
     if (!match) return;
 
-    // Bot mode → reset board locally
     if (isBotMode) {
       setMatch((prev) =>
         prev
@@ -328,7 +343,6 @@ export default function TicTacToePage() {
   return (
     <div className="min-h-screen bg-[#1a0b2e] p-4 sm:p-6 font-mono flex flex-col">
       <div className="w-full max-w-2xl mx-auto flex flex-col gap-4">
-        {/* Header */}
         <div className="flex items-center justify-between shrink-0">
           <div>
             <h1 className="text-xl sm:text-2xl font-black text-white">
@@ -361,7 +375,6 @@ export default function TicTacToePage() {
           </Link>
         </div>
 
-        {/* No match → pick bot or friend */}
         {!match && (
           <div
             className="border-4 border-black rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] text-center flex flex-col items-center"
@@ -423,7 +436,6 @@ export default function TicTacToePage() {
           </div>
         )}
 
-        {/* Waiting for opponent */}
         {match && match.status === 'waiting' && (
           <div
             className="border-4 border-black rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] flex flex-col items-center"
@@ -459,7 +471,6 @@ export default function TicTacToePage() {
           </div>
         )}
 
-        {/* Playing or finished */}
         {match && match.status !== 'waiting' && (
           <>
             <div className="grid grid-cols-2 gap-3">

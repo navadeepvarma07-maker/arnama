@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { useProfile, displayLabel, initialsFor } from '@/lib/use-profile';
 import { BgPickerButton, getBgStyle, isDarkBg, MessageBg } from '@/components/message-bg';
 import { SwipeCarousel } from '@/components/arnama/swipe-carousel';
+import { fireConfetti } from '@/lib/confetti';
 
 type Message = {
   id: number;
@@ -30,6 +31,9 @@ type CrewProfile = {
 };
 
 const AVATAR_COLORS = ['#E2F0D9', '#FFD1DC', '#E6E6FA', '#FFF5BA', '#D4F0F0'];
+const REACTION_EMOJIS = ['❤️', '🔥', '😂', '👍', '😮', '😭'];
+
+type ReactionsMap = Record<string, Record<string, string[]>>;
 
 export default function ChatPage() {
   const { profile } = useProfile();
@@ -49,35 +53,30 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false);
   const [newBelow, setNewBelow] = useState(0);
 
-  // Slides: 0 = chat, 1 = crew, 2 = pulse
   const [tabIndex, setTabIndex] = useState(0);
 
-  // Reply / Edit
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editText, setEditText] = useState('');
 
-  // Highlight
   const [highlight, setHighlight] = useState<{ id: number; key: number } | null>(
     null
   );
 
-  // Context menu
   const [contextMenu, setContextMenu] = useState<ContextMenu>(null);
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
+  const myMessageCountRef = useRef<number | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
   const initialLoadDone = useRef(false);
 
-  // Crew slide
   const [crewProfiles, setCrewProfiles] = useState<CrewProfile[]>([]);
   const [crewOnlineIds, setCrewOnlineIds] = useState<string[]>([]);
   const [crewCounts, setCrewCounts] = useState<Record<string, number>>({});
   const [crewLoading, setCrewLoading] = useState(true);
 
-  // Pulse slide
   const [pulseTotal, setPulseTotal] = useState(0);
   const [pulseToday, setPulseToday] = useState(0);
   const [pulseWeek, setPulseWeek] = useState(0);
@@ -88,9 +87,9 @@ export default function ChatPage() {
   const [pulseBusiestHour, setPulseBusiestHour] = useState<number | null>(null);
   const [pulseLoading, setPulseLoading] = useState(true);
 
-  // =========================
+  const [reactions, setReactions] = useState<ReactionsMap>({});
+
   // AUTH
-  // =========================
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       const user = data.user;
@@ -101,6 +100,15 @@ export default function ChatPage() {
         window.location.href = '/login';
       } else {
         setLoading(false);
+        // Count my messages for first-message confetti
+        supabase
+          .from('messages')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_email', e)
+          .then(({ count }) => {
+            myMessageCountRef.current =
+              typeof count === 'number' ? count : 0;
+          });
         supabase
           .from('profiles')
           .update({ last_seen_at: new Date().toISOString() })
@@ -112,9 +120,7 @@ export default function ChatPage() {
     });
   }, []);
 
-  // =========================
   // LOAD MESSAGES
-  // =========================
   useEffect(() => {
     if (!email) return;
     supabase
@@ -134,9 +140,30 @@ export default function ChatPage() {
       });
   }, [email]);
 
-  // =========================
+  // LOAD REACTIONS
+  useEffect(() => {
+    if (!email) return;
+    supabase
+      .from('reactions')
+      .select('message_id, user_email, emoji')
+      .eq('source', 'chat')
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('reactions load:', error);
+          return;
+        }
+        const map: ReactionsMap = {};
+        (data ?? []).forEach((r: any) => {
+          const mid = String(r.message_id);
+          if (!map[mid]) map[mid] = {};
+          if (!map[mid][r.emoji]) map[mid][r.emoji] = [];
+          map[mid][r.emoji].push(r.user_email);
+        });
+        setReactions(map);
+      });
+  }, [email]);
+
   // REALTIME MESSAGES
-  // =========================
   useEffect(() => {
     if (!email) return;
     const channel = supabase
@@ -185,14 +212,61 @@ export default function ChatPage() {
     };
   }, [email]);
 
-  // Auto-scroll to bottom on new messages
+  // REALTIME REACTIONS
+  useEffect(() => {
+    if (!email) return;
+    const channel = supabase
+      .channel('reactions-live')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'reactions' },
+        (payload) => {
+          const r = payload.new as any;
+          if (r.source !== 'chat') return;
+          const mid = String(r.message_id);
+          setReactions((prev) => {
+            const next = { ...prev };
+            const byEmoji = { ...(next[mid] ?? {}) };
+            const emails = new Set(byEmoji[r.emoji] ?? []);
+            emails.add(r.user_email);
+            byEmoji[r.emoji] = Array.from(emails);
+            next[mid] = byEmoji;
+            return next;
+          });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'reactions' },
+        (payload) => {
+          const r = payload.old as any;
+          if (r.source !== 'chat') return;
+          const mid = String(r.message_id);
+          setReactions((prev) => {
+            const next = { ...prev };
+            const byEmoji = { ...(next[mid] ?? {}) };
+            const emails = (byEmoji[r.emoji] ?? []).filter(
+              (e) => e !== r.user_email
+            );
+            if (emails.length === 0) delete byEmoji[r.emoji];
+            else byEmoji[r.emoji] = emails;
+            if (Object.keys(byEmoji).length === 0) delete next[mid];
+            else next[mid] = byEmoji;
+            return next;
+          });
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [email]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // =========================
   // CREW DATA
-  // =========================
   useEffect(() => {
     if (!email) return;
     Promise.all([
@@ -217,7 +291,6 @@ export default function ChatPage() {
     });
   }, [email]);
 
-  // Crew presence
   useEffect(() => {
     if (!userId || !email) return;
     const ch = supabase.channel('chat-crew-presence', {
@@ -235,9 +308,7 @@ export default function ChatPage() {
     };
   }, [userId, email]);
 
-  // =========================
-  // PULSE DATA (accurate)
-  // =========================
+  // PULSE DATA
   useEffect(() => {
     if (!email) return;
 
@@ -250,9 +321,7 @@ export default function ChatPage() {
     const sevenDaysAgo = startOfDay - 6 * 24 * 60 * 60 * 1000;
 
     Promise.all([
-      // 1. Total count — exact, no limit
       supabase.from('messages').select('*', { count: 'exact', head: true }),
-      // 2. Recent messages (last 7 days) for daily/weekly/top/hour stats
       supabase
         .from('messages')
         .select('user_email, created_at')
@@ -298,9 +367,6 @@ export default function ChatPage() {
     });
   }, [email]);
 
-  // =========================
-  // SCROLL
-  // =========================
   function handleScroll() {
     const el = scrollRef.current;
     if (!el) return;
@@ -314,9 +380,6 @@ export default function ChatPage() {
     setNewBelow(0);
   }
 
-  // =========================
-  // JUMP TO REPLY
-  // =========================
   function jumpToMessage(id: number) {
     const el = document.getElementById(`msg-${id}`);
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -326,9 +389,6 @@ export default function ChatPage() {
     }, 1600);
   }
 
-  // =========================
-  // SEND
-  // =========================
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
     const text = input.trim();
@@ -371,13 +431,17 @@ export default function ChatPage() {
       setMessages((prev) =>
         prev.map((m) => (m.id === tempId ? (data as Message) : m))
       );
+      // 🎉 confetti on your very first message ever
+      if (myMessageCountRef.current === 0) {
+        myMessageCountRef.current = 1;
+        fireConfetti({ count: 90 });
+      } else if (myMessageCountRef.current !== null) {
+        myMessageCountRef.current += 1;
+      }
     }
     setSending(false);
   }
 
-  // =========================
-  // EDIT
-  // =========================
   async function saveEdit(messageId: number) {
     const text = editText.trim();
     if (!text) {
@@ -405,9 +469,6 @@ export default function ChatPage() {
     }
   }
 
-  // =========================
-  // DELETE
-  // =========================
   async function deleteMessage(messageId: number) {
     if (!confirm('Delete this message?')) return;
     const backup = messages;
@@ -424,9 +485,50 @@ export default function ChatPage() {
     }
   }
 
-  // =========================
-  // BG
-  // =========================
+  function hasMyReaction(messageId: number, emoji: string): boolean {
+    if (!email) return false;
+    const mid = String(messageId);
+    return (reactions[mid]?.[emoji] ?? []).includes(email);
+  }
+
+  async function toggleReaction(messageId: number, emoji: string) {
+    if (!email) return;
+    const mid = String(messageId);
+    const mine = hasMyReaction(messageId, emoji);
+
+    setReactions((prev) => {
+      const next = { ...prev };
+      const byEmoji = { ...(next[mid] ?? {}) };
+      const emails = new Set(byEmoji[emoji] ?? []);
+      if (mine) emails.delete(email);
+      else emails.add(email);
+      if (emails.size === 0) delete byEmoji[emoji];
+      else byEmoji[emoji] = Array.from(emails);
+      if (Object.keys(byEmoji).length === 0) delete next[mid];
+      else next[mid] = byEmoji;
+      return next;
+    });
+
+    if (mine) {
+      const { error } = await supabase
+        .from('reactions')
+        .delete()
+        .eq('source', 'chat')
+        .eq('message_id', mid)
+        .eq('user_email', email)
+        .eq('emoji', emoji);
+      if (error) console.error('unreact failed:', error);
+    } else {
+      const { error } = await supabase.from('reactions').insert({
+        source: 'chat',
+        message_id: mid,
+        user_email: email,
+        emoji,
+      });
+      if (error) console.error('react failed:', error);
+    }
+  }
+
   async function handleBgChange(bg: MessageBg) {
     const {
       data: { user },
@@ -435,15 +537,12 @@ export default function ChatPage() {
     await supabase.from('profiles').update({ chat_bg: bg }).eq('id', user.id);
   }
 
-  // =========================
-  // CONTEXT MENU
-  // =========================
   function openContextMenu(message: Message, x: number, y: number) {
-    const menuWidth = 180;
-    const menuHeight = 180;
+    const menuWidth = 240;
+    const menuHeight = 260;
     const safeX = Math.min(x, window.innerWidth - menuWidth - 8);
     const safeY = Math.min(y, window.innerHeight - menuHeight - 8);
-    setContextMenu({ message, x: safeX, y: safeY });
+    setContextMenu({ message, x: Math.max(8, safeX), y: Math.max(8, safeY) });
   }
 
   function handleRightClick(e: React.MouseEvent, message: Message) {
@@ -487,9 +586,6 @@ export default function ChatPage() {
     };
   }, [contextMenu]);
 
-  // =========================
-  // HELPERS
-  // =========================
   function findMessageById(id: number | null): Message | null {
     if (id === null || id === undefined) return null;
     return messages.find((m) => m.id === id) ?? null;
@@ -551,6 +647,11 @@ export default function ChatPage() {
               const isEditing = editingId === m.id;
               const repliedTo = findMessageById(m.reply_to_id);
               const isHighlighted = highlight?.id === m.id;
+
+              const msgReactions = reactions[String(m.id)] ?? {};
+              const reactionEntries = Object.entries(msgReactions)
+                .filter(([, emails]) => emails.length > 0)
+                .sort((a, b) => b[1].length - a[1].length);
 
               return (
                 <div
@@ -758,6 +859,54 @@ export default function ChatPage() {
                         </p>
                       )}
                     </div>
+
+                    {reactionEntries.length > 0 && (
+                      <div
+                        className="flex flex-wrap"
+                        style={{
+                          gap: '4px',
+                          marginTop: '4px',
+                          paddingLeft: mine ? '0' : '2px',
+                          paddingRight: mine ? '2px' : '0',
+                          justifyContent: mine ? 'flex-end' : 'flex-start',
+                        }}
+                      >
+                        {reactionEntries.map(([emoji, emails]) => {
+                          const isMine = !!email && emails.includes(email);
+                          return (
+                            <button
+                              key={emoji}
+                              onClick={() => toggleReaction(m.id, emoji)}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '3px',
+                                padding: '2px 8px',
+                                border: '2px solid black',
+                                borderRadius: '999px',
+                                background: isMine
+                                  ? 'linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #FF8BA7'
+                                  : 'linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #FFFDF5',
+                                cursor: 'pointer',
+                                boxShadow: '2px 2px 0 0 black',
+                                fontSize: '11px',
+                                fontWeight: 900,
+                                color: '#000',
+                                lineHeight: 1.2,
+                              }}
+                              aria-label={`${emoji} ${emails.length}`}
+                            >
+                              <span style={{ fontSize: '12px', lineHeight: 1 }}>
+                                {emoji}
+                              </span>
+                              <span style={{ fontSize: '10px' }}>
+                                {emails.length}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -766,7 +915,6 @@ export default function ChatPage() {
           <div ref={bottomRef} style={{ height: '4px' }} />
         </div>
 
-        {/* New messages pill */}
         {newBelow > 0 && (
           <button
             onClick={scrollToBottom}
@@ -786,7 +934,6 @@ export default function ChatPage() {
           </button>
         )}
 
-        {/* Reply preview bar */}
         {replyTo && (
           <div
             className="border-t-4 border-black flex items-center"
@@ -842,7 +989,6 @@ export default function ChatPage() {
           </div>
         )}
 
-        {/* Input */}
         <form
           onSubmit={handleSend}
           className="border-t-4 border-black bg-[#E6E6FA] flex shrink-0 items-stretch"
@@ -887,14 +1033,7 @@ export default function ChatPage() {
         WebkitOverflowScrolling: 'touch',
       }}
     >
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '10px',
-        }}
-      >
-        {/* Header card */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <div
           style={{
             border: '4px solid black',
@@ -974,7 +1113,6 @@ export default function ChatPage() {
           </span>
         </div>
 
-        {/* Crew list */}
         {crewLoading ? (
           <p
             style={{
@@ -1148,14 +1286,11 @@ export default function ChatPage() {
             emoji="⏰"
             label="busiest hour"
             value={
-              pulseBusiestHour === null
-                ? '—'
-                : formatHour(pulseBusiestHour)
+              pulseBusiestHour === null ? '—' : formatHour(pulseBusiestHour)
             }
             color="#D4F0F0"
           />
 
-          {/* Top sender — full width */}
           <div style={{ gridColumn: '1 / -1' }}>
             {pulseTopSender ? (
               <div
@@ -1279,7 +1414,6 @@ export default function ChatPage() {
         className="w-full max-w-3xl h-full flex flex-col p-3 sm:p-6 gap-3 sm:gap-4"
         style={{ minHeight: 0 }}
       >
-        {/* Header */}
         <div className="flex items-center justify-between shrink-0 gap-2">
           <div className="flex items-center gap-3 min-w-0">
             <div
@@ -1320,7 +1454,6 @@ export default function ChatPage() {
           </div>
         </div>
 
-        {/* CAROUSEL: chat ↔ crew ↔ pulse */}
         <SwipeCarousel
           mode="fill"
           index={tabIndex}
@@ -1330,7 +1463,6 @@ export default function ChatPage() {
         />
       </div>
 
-      {/* Context Menu */}
       {contextMenu && (
         <div
           onClick={(e) => e.stopPropagation()}
@@ -1341,15 +1473,63 @@ export default function ChatPage() {
             zIndex: 500,
             backgroundColor: '#FFFDF5',
             border: '3px solid black',
-            borderRadius: '14px',
+            borderRadius: '18px',
             boxShadow: '5px 5px 0 0 black',
-            padding: '6px',
+            padding: '8px',
             display: 'flex',
             flexDirection: 'column',
-            gap: '2px',
-            minWidth: '160px',
+            gap: '4px',
+            minWidth: '220px',
+            maxWidth: 'calc(100vw - 16px)',
           }}
         >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '2px',
+              padding: '4px 4px 8px',
+              borderBottom: '3px dashed rgba(0,0,0,0.18)',
+              marginBottom: '2px',
+            }}
+          >
+            {REACTION_EMOJIS.map((emoji) => {
+              const active = hasMyReaction(contextMenu.message.id, emoji);
+              return (
+                <button
+                  key={emoji}
+                  onClick={() => {
+                    toggleReaction(contextMenu.message.id, emoji);
+                    closeContextMenu();
+                  }}
+                  style={{
+                    width: '34px',
+                    height: '34px',
+                    borderRadius: '999px',
+                    border: active
+                      ? '2px solid black'
+                      : '2px solid transparent',
+                    background: active
+                      ? 'linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #FF8BA7'
+                      : 'transparent',
+                    cursor: 'pointer',
+                    fontSize: '18px',
+                    lineHeight: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: 0,
+                    boxShadow: active ? '2px 2px 0 0 black' : 'none',
+                  }}
+                  aria-label={`react ${emoji}`}
+                >
+                  {emoji}
+                </button>
+              );
+            })}
+          </div>
+
           <button
             onClick={() => {
               setReplyTo(contextMenu.message);

@@ -74,7 +74,6 @@ export default function TunesPage() {
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState('');
 
-  // 0 = room, 1 = solo
   const [tabIndex, setTabIndex] = useState(0);
   const roomMode = tabIndex === 0;
 
@@ -99,9 +98,7 @@ export default function TunesPage() {
   const isDJ = !!userId && room?.dj_user_id === userId;
   const djName = room?.dj_email ? room.dj_email.split('@')[0] : null;
 
-  // =========================
   // AUTH
-  // =========================
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       const user = data.user;
@@ -116,9 +113,7 @@ export default function TunesPage() {
     });
   }, []);
 
-  // =========================
   // LOAD TUNES
-  // =========================
   useEffect(() => {
     if (!email) return;
     supabase
@@ -131,9 +126,7 @@ export default function TunesPage() {
       });
   }, [email]);
 
-  // =========================
   // LOAD ROOM
-  // =========================
   useEffect(() => {
     if (!email) return;
     supabase
@@ -151,9 +144,7 @@ export default function TunesPage() {
     roomRef.current = room;
   }, [room]);
 
-  // =========================
   // ROOM REALTIME
-  // =========================
   useEffect(() => {
     if (!email) return;
     const channel = supabase
@@ -171,9 +162,7 @@ export default function TunesPage() {
     };
   }, [email]);
 
-  // =========================
   // YT IFRAME API
-  // =========================
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (window.YT && window.YT.Player) {
@@ -192,13 +181,10 @@ export default function TunesPage() {
     };
   }, []);
 
-  // =========================
   // CREATE / RECREATE PLAYER
-  // =========================
   useEffect(() => {
     if (!ytReady) return;
 
-    // Destroy any existing player
     if (playerRef.current) {
       try {
         playerRef.current.destroy();
@@ -212,17 +198,16 @@ export default function TunesPage() {
     const containerId = roomMode ? 'yt-player-room' : 'yt-player-solo';
     const container = document.getElementById(containerId);
     if (!container) {
-      // Container not yet rendered — retry once on next tick
       const retry = setTimeout(() => {
         const c2 = document.getElementById(containerId);
-        if (c2) createPlayer(c2, activeVideoId);
+        if (c2) createPlayer(activeVideoId);
       }, 80);
       return () => clearTimeout(retry);
     }
 
-    createPlayer(container, activeVideoId);
+    createPlayer(activeVideoId);
 
-    function createPlayer(el: HTMLElement, videoId: string) {
+    function createPlayer(videoId: string) {
       const r = roomRef.current;
 
       let initialPos = 0;
@@ -273,9 +258,7 @@ export default function TunesPage() {
     }
   }, [ytReady, roomMode, roomVideoId, localVideoId]);
 
-  // =========================
-  // SYNC ENGINE (room mode only)
-  // =========================
+  // SYNC ENGINE (room mode only, skip our own writes)
   useEffect(() => {
     if (!roomMode) return;
     if (!playerRef.current || !room || !ytReady) return;
@@ -311,9 +294,7 @@ export default function TunesPage() {
     } catch {}
   }, [room, ytReady, roomMode]);
 
-  // =========================
   // POLL POSITION
-  // =========================
   useEffect(() => {
     if (!isPlaying) return;
     const i = setInterval(() => {
@@ -332,9 +313,7 @@ export default function TunesPage() {
     return () => clearInterval(i);
   }, [isPlaying, roomMode]);
 
-  // =========================
   // PRESENCE
-  // =========================
   useEffect(() => {
     if (!email || !userId) return;
     const ch = supabase.channel('listening-presence', {
@@ -352,9 +331,21 @@ export default function TunesPage() {
     };
   }, [email, userId]);
 
-  // =========================
+  // HELPERS
+  function getPlayerState(): number {
+    try {
+      return playerRef.current?.getPlayerState?.() ?? -1;
+    } catch {
+      return -1;
+    }
+  }
+
+  function actuallyPlaying(): boolean {
+    const st = getPlayerState();
+    return st === 1;
+  }
+
   // ACTIONS
-  // =========================
   async function updateRoom(updates: Partial<RoomState>) {
     if (!userId || !email) return;
     suppressSyncRef.current = true;
@@ -377,6 +368,11 @@ export default function TunesPage() {
     await updateRoom({ dj_user_id: userId, dj_email: email });
   }
 
+  async function stepDown() {
+    if (!isDJ) return;
+    await updateRoom({ dj_user_id: null, dj_email: null });
+  }
+
   async function playTune(tune: Tune) {
     const videoId = extractVideoId(tune.url);
     if (!videoId) {
@@ -385,7 +381,23 @@ export default function TunesPage() {
     }
 
     if (roomMode) {
-      if (!isDJ) return;
+      if (!isDJ) {
+        // Auto-claim DJ when nobody is on the wheel, or just nudge them
+        if (!room?.dj_user_id) {
+          await updateRoom({
+            current_tune_id: tune.id,
+            current_video_id: videoId,
+            is_playing: true,
+            position_seconds: 0,
+            started_at: new Date().toISOString(),
+            dj_user_id: userId,
+            dj_email: email,
+          });
+        } else {
+          alert('✋ take the wheel first to control the room');
+        }
+        return;
+      }
       await updateRoom({
         current_tune_id: tune.id,
         current_video_id: videoId,
@@ -394,34 +406,42 @@ export default function TunesPage() {
         started_at: new Date().toISOString(),
       });
     } else {
-      // Solo mode — play locally
       localPositionRef.current = 0;
       setLocalVideoId(videoId);
       setLocalTitle(tune.title);
     }
   }
 
+  // 🎯 THE FIX — act on local player FIRST, then broadcast
   function togglePlay() {
     if (!playerRef.current) return;
     if (roomMode && !isDJ) return;
 
-    const next = !isPlaying;
+    const currentlyPlaying = actuallyPlaying();
+    const next = !currentlyPlaying;
 
+    // 1. Act on the local player IMMEDIATELY — no waiting
+    try {
+      if (next) playerRef.current.playVideo();
+      else playerRef.current.pauseVideo();
+    } catch {}
+    setIsPlaying(next); // optimistic UI update
+
+    // 2. Grab the current position
+    let pos = 0;
+    try {
+      pos = playerRef.current.getCurrentTime() || 0;
+    } catch {}
+
+    // 3. Broadcast to everyone else
     if (roomMode) {
-      let pos = 0;
-      try {
-        pos = playerRef.current.getCurrentTime() || 0;
-      } catch {}
       updateRoom({
         is_playing: next,
         position_seconds: pos,
         started_at: next ? new Date().toISOString() : null,
       });
     } else {
-      try {
-        if (next) playerRef.current.playVideo();
-        else playerRef.current.pauseVideo();
-      } catch {}
+      localPositionRef.current = pos;
     }
   }
 
@@ -437,7 +457,10 @@ export default function TunesPage() {
     if (roomMode) {
       updateRoom({
         position_seconds: sec,
-        started_at: room?.is_playing ? new Date().toISOString() : null,
+        started_at:
+          room?.is_playing || actuallyPlaying()
+            ? new Date().toISOString()
+            : null,
       });
     } else {
       localPositionRef.current = sec;
@@ -486,9 +509,7 @@ export default function TunesPage() {
 
   const progressPercent = duration > 0 ? (position / duration) * 100 : 0;
 
-  // =========================
-  // RENDER A SLIDE (room or solo)
-  // =========================
+  // RENDER SLIDE
   function renderSlide(mode: 'room' | 'solo') {
     const modeIsRoom = mode === 'room';
     const isActive =
@@ -625,16 +646,18 @@ export default function TunesPage() {
                   </button>
                 )}
                 {modeIsRoom && isDJ && (
-                  <span
-                    className="shrink-0 border-2 border-black bg-[#FF8BA7] text-black font-black rounded-full"
+                  <button
+                    onClick={stepDown}
+                    className="shrink-0 border-2 border-black bg-[#FF8BA7] text-black font-black rounded-full hover:-translate-y-0.5 active:translate-y-0.5 transition"
                     style={{
                       padding: '5px 11px',
                       fontSize: '10px',
                       boxShadow: '2px 2px 0 0 black',
                     }}
+                    title="tap to step down as DJ"
                   >
-                    🎧 you're DJ
-                  </span>
+                    🎧 you're DJ · tap to step down
+                  </button>
                 )}
                 {!modeIsRoom && (
                   <span
@@ -671,11 +694,27 @@ export default function TunesPage() {
 
               {/* CONTROLS */}
               <div className="flex items-center" style={{ gap: '12px' }}>
+                {/* PLAY/PAUSE — onPointerUp for instant response */}
                 <button
-                  onClick={togglePlay}
+                  type="button"
+                  onPointerUp={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    togglePlay();
+                  }}
+                  onPointerDown={(e) => {
+                    // Prevent the parent carousel / scroll from stealing the touch
+                    e.stopPropagation();
+                  }}
                   disabled={!controlsEnabled}
                   className="shrink-0 inline-flex items-center justify-center border-2 border-black bg-[#E2F0D9] text-black font-black rounded-lg shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0"
-                  style={{ width: '48px', height: '48px', fontSize: '18px' }}
+                  style={{
+                    width: '52px',
+                    height: '52px',
+                    fontSize: '20px',
+                    touchAction: 'manipulation',
+                    WebkitTapHighlightColor: 'transparent',
+                  }}
                   aria-label={isPlaying ? 'Pause' : 'Play'}
                 >
                   {isPlaying ? '⏸' : '▶'}
@@ -689,7 +728,10 @@ export default function TunesPage() {
                       background: `linear-gradient(180deg, rgba(0,0,0,0.08) 0%, rgba(255,255,255,0.4) 100%), #FFFDF5`,
                       overflow: 'hidden',
                       cursor:
-                        duration > 0 && controlsEnabled ? 'pointer' : 'default',
+                        duration > 0 && controlsEnabled
+                          ? 'pointer'
+                          : 'default',
+                      touchAction: 'manipulation',
                     }}
                     onClick={(e) => {
                       if (!duration || !controlsEnabled) return;
@@ -824,12 +866,11 @@ export default function TunesPage() {
               {tunes.map((t) => {
                 const isCurrentRoom =
                   modeIsRoom && t.id === room?.current_tune_id;
-                const isCurrentSolo =
-                  !modeIsRoom && localTitle === t.title;
+                const isCurrentSolo = !modeIsRoom && localTitle === t.title;
                 const isCurrent = isCurrentRoom || isCurrentSolo;
                 const addedBy = t.user_email.split('@')[0];
                 const mine = t.user_email === email;
-                const canPlay = modeIsRoom ? isDJ : true;
+                const canPlay = modeIsRoom ? isDJ || !room?.dj_user_id : true;
 
                 return (
                   <div
