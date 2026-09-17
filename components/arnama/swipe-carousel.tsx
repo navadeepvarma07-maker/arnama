@@ -17,10 +17,8 @@ export function SwipeCarousel({
 }) {
   const [dragOffset, setDragOffset] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
-
   const viewportRef = useRef<HTMLDivElement>(null);
 
-  // Refs so native listeners always read fresh values
   const indexRef = useRef(index);
   const countRef = useRef(slides.length);
   const onIndexChangeRef = useRef(onIndexChange);
@@ -38,7 +36,6 @@ export function SwipeCarousel({
     onIndexChangeRef.current = onIndexChange;
   }, [index, slides.length, onIndexChange]);
 
-  // Native touch + mouse listeners
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
@@ -70,11 +67,9 @@ export function SwipeCarousel({
 
     function onMove(x: number, y: number, touchEvt?: TouchEvent) {
       if (!active.current) return;
-
       const dx = x - startX.current;
       const dy = y - startY.current;
 
-      // Decide axis on first meaningful move
       if (axis.current === null) {
         if (Math.abs(dx) > MIN_MOVE || Math.abs(dy) > MIN_MOVE) {
           axis.current = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
@@ -85,13 +80,9 @@ export function SwipeCarousel({
         }
         return;
       }
-
       if (axis.current !== 'x') return;
 
-      // 🎯 KEY FIX — stop the browser from scrolling while we drag horizontally
-      if (touchEvt && touchEvt.cancelable) {
-        touchEvt.preventDefault();
-      }
+      if (touchEvt && touchEvt.cancelable) touchEvt.preventDefault();
 
       const cur = indexRef.current;
       const cnt = countRef.current;
@@ -105,7 +96,6 @@ export function SwipeCarousel({
 
     function onEnd() {
       if (!active.current) return;
-
       const cur = indexRef.current;
       const cnt = countRef.current;
       const off = lastOffset.current;
@@ -120,34 +110,27 @@ export function SwipeCarousel({
       resetState();
     }
 
-    // Touch handlers
     function handleTouchStart(e: TouchEvent) {
       if (e.touches.length !== 1) return;
       const t = e.touches[0];
       onStart(t.clientX, t.clientY);
     }
-
     function handleTouchMove(e: TouchEvent) {
       if (e.touches.length !== 1) return;
       const t = e.touches[0];
       onMove(t.clientX, t.clientY, e);
     }
-
     function handleTouchEnd() {
       onEnd();
     }
-
-    // Mouse handlers (desktop)
     function handleMouseDown(e: MouseEvent) {
       if (e.button !== 0) return;
       onStart(e.clientX, e.clientY);
     }
-
     function handleMouseMove(e: MouseEvent) {
       if (!active.current) return;
       onMove(e.clientX, e.clientY);
     }
-
     function handleMouseUp() {
       onEnd();
     }
@@ -156,7 +139,6 @@ export function SwipeCarousel({
     el.addEventListener('touchmove', handleTouchMove, { passive: false });
     el.addEventListener('touchend', handleTouchEnd);
     el.addEventListener('touchcancel', handleTouchEnd);
-
     el.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
@@ -166,7 +148,6 @@ export function SwipeCarousel({
       el.removeEventListener('touchmove', handleTouchMove);
       el.removeEventListener('touchend', handleTouchEnd);
       el.removeEventListener('touchcancel', handleTouchEnd);
-
       el.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
@@ -178,17 +159,17 @@ export function SwipeCarousel({
       style={{
         display: 'flex',
         flexDirection: 'column',
-        minHeight: 0,
         width: '100%',
-        ...(mode === 'fill' ? { flex: 1 } : {}),
+        minHeight: 0,
+        flex: 1,
       }}
     >
-      {/* Segmented glass tab bar */}
+      {/* Segmented tab bar — tight on mobile, never wraps */}
       <div
         style={{
           display: 'flex',
-          gap: '6px',
-          padding: '6px',
+          gap: '4px',
+          padding: '5px',
           border: '4px solid black',
           borderRadius: '999px',
           background: `
@@ -206,8 +187,9 @@ export function SwipeCarousel({
             inset 0 1px 0 rgba(255, 255, 255, 0.7)
           `,
           flexShrink: 0,
-          marginBottom: '12px',
+          marginBottom: '8px',
           userSelect: 'none',
+          overflow: 'hidden',
         }}
       >
         {labels.map((label, i) => {
@@ -219,11 +201,16 @@ export function SwipeCarousel({
               onClick={() => onIndexChange(i)}
               style={{
                 flex: 1,
-                padding: '10px',
+                minWidth: 0,
+                padding: '8px 6px',
                 border: '2px solid black',
                 borderRadius: '999px',
                 fontWeight: 900,
-                fontSize: '12px',
+                fontSize: '11px',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                textAlign: 'center',
                 background: isActive
                   ? `
                     linear-gradient(
@@ -252,14 +239,14 @@ export function SwipeCarousel({
         })}
       </div>
 
-      {/* Slides viewport */}
+      {/* Slides viewport — explicit flex chain */}
       <div
         ref={viewportRef}
         style={{
           position: 'relative',
           overflow: 'hidden',
           width: '100%',
-          flex: mode === 'fill' ? 1 : undefined,
+          flex: 1,
           minHeight: 0,
           touchAction: 'pan-y',
           cursor: isDragging ? 'grabbing' : 'default',
@@ -276,6 +263,8 @@ export function SwipeCarousel({
                 position: 'absolute',
                 top: 0,
                 left: 0,
+                right: 0,
+                bottom: 0,
                 width: '100%',
                 height: '100%',
                 transform: `translateX(calc(${basePercent}% + ${dragPx}px))`,

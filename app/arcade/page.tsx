@@ -975,7 +975,7 @@ export default function ArcadePage() {
   return (
     <div className="fixed inset-0 bg-[#1a0b2e] font-mono flex justify-center overflow-hidden">
       <div
-        className="w-full max-w-3xl h-full flex flex-col p-3 sm:p-6 gap-3 sm:gap-4"
+        className="w-full max-w-3xl h-full flex flex-col p-2 sm:p-6 gap-2 sm:gap-4"
         style={{ minHeight: 0 }}
       >
         <div className="flex items-center justify-between shrink-0 gap-2">

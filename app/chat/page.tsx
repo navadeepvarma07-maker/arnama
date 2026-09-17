@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { useProfile, displayLabel, initialsFor } from '@/lib/use-profile';
 import { BgPickerButton, getBgStyle, isDarkBg, MessageBg } from '@/components/message-bg';
 import { SwipeCarousel } from '@/components/arnama/swipe-carousel';
+import { HiddenScroll } from '@/components/arnama/hidden-scroll';
 import { fireConfetti } from '@/lib/confetti';
 
 type Message = {
@@ -68,7 +69,6 @@ export default function ChatPage() {
   const myMessageCountRef = useRef<number | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
   const initialLoadDone = useRef(false);
 
@@ -85,11 +85,11 @@ export default function ChatPage() {
     count: number;
   } | null>(null);
   const [pulseBusiestHour, setPulseBusiestHour] = useState<number | null>(null);
+  const [pulseBusiestDay, setPulseBusiestDay] = useState<string | null>(null);
   const [pulseLoading, setPulseLoading] = useState(true);
 
   const [reactions, setReactions] = useState<ReactionsMap>({});
 
-  // AUTH
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       const user = data.user;
@@ -100,7 +100,6 @@ export default function ChatPage() {
         window.location.href = '/login';
       } else {
         setLoading(false);
-        // Count my messages for first-message confetti
         supabase
           .from('messages')
           .select('*', { count: 'exact', head: true })
@@ -113,14 +112,11 @@ export default function ChatPage() {
           .from('profiles')
           .update({ last_seen_at: new Date().toISOString() })
           .eq('id', user!.id)
-          .then(({ error }) => {
-            if (error) console.error('last_seen update failed:', error);
-          });
+          .then(() => {});
       }
     });
   }, []);
 
-  // LOAD MESSAGES
   useEffect(() => {
     if (!email) return;
     supabase
@@ -140,7 +136,6 @@ export default function ChatPage() {
       });
   }, [email]);
 
-  // LOAD REACTIONS
   useEffect(() => {
     if (!email) return;
     supabase
@@ -148,10 +143,7 @@ export default function ChatPage() {
       .select('message_id, user_email, emoji')
       .eq('source', 'chat')
       .then(({ data, error }) => {
-        if (error) {
-          console.error('reactions load:', error);
-          return;
-        }
+        if (error) return;
         const map: ReactionsMap = {};
         (data ?? []).forEach((r: any) => {
           const mid = String(r.message_id);
@@ -163,7 +155,6 @@ export default function ChatPage() {
       });
   }, [email]);
 
-  // REALTIME MESSAGES
   useEffect(() => {
     if (!email) return;
     const channel = supabase
@@ -212,7 +203,6 @@ export default function ChatPage() {
     };
   }, [email]);
 
-  // REALTIME REACTIONS
   useEffect(() => {
     if (!email) return;
     const channel = supabase
@@ -266,7 +256,6 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // CREW DATA
   useEffect(() => {
     if (!email) return;
     Promise.all([
@@ -308,10 +297,8 @@ export default function ChatPage() {
     };
   }, [userId, email]);
 
-  // PULSE DATA
   useEffect(() => {
     if (!email) return;
-
     const now = new Date();
     const startOfDay = new Date(
       now.getFullYear(),
@@ -332,24 +319,26 @@ export default function ChatPage() {
       if (typeof totalRes.count === 'number') {
         setPulseTotal(totalRes.count);
       }
-
       if (recentRes.error) {
-        console.error(recentRes.error);
         setPulseLoading(false);
         return;
       }
-
       const rows = recentRes.data ?? [];
       let today = 0;
       const bySender: Record<string, number> = {};
       const byHour: number[] = new Array(24).fill(0);
+      const byDay: Record<string, number> = {};
 
       rows.forEach((r: any) => {
-        const t = new Date(r.created_at).getTime();
+        const d = new Date(r.created_at);
+        const t = d.getTime();
         if (t >= startOfDay) today++;
         bySender[r.user_email] = (bySender[r.user_email] ?? 0) + 1;
-        const h = new Date(r.created_at).getHours();
-        byHour[h]++;
+        byHour[d.getHours()]++;
+        const dayKey = `${d.getFullYear()}-${String(
+          d.getMonth() + 1
+        ).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        byDay[dayKey] = (byDay[dayKey] ?? 0) + 1;
       });
 
       setPulseToday(today);
@@ -361,15 +350,17 @@ export default function ChatPage() {
       if (rows.length > 0) {
         const busiest = byHour.indexOf(Math.max(...byHour));
         setPulseBusiestHour(busiest);
+        const busiestDay = Object.entries(byDay).sort(
+          (a, b) => b[1] - a[1]
+        )[0];
+        if (busiestDay) setPulseBusiestDay(busiestDay[0]);
       }
-
       setPulseLoading(false);
     });
   }, [email]);
 
-  function handleScroll() {
-    const el = scrollRef.current;
-    if (!el) return;
+  function handleScroll(e: React.UIEvent<HTMLDivElement>) {
+    const el = e.currentTarget;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     isAtBottomRef.current = atBottom;
     if (atBottom) setNewBelow(0);
@@ -431,7 +422,6 @@ export default function ChatPage() {
       setMessages((prev) =>
         prev.map((m) => (m.id === tempId ? (data as Message) : m))
       );
-      // 🎉 confetti on your very first message ever
       if (myMessageCountRef.current === 0) {
         myMessageCountRef.current = 1;
         fireConfetti({ count: 90 });
@@ -463,23 +453,18 @@ export default function ChatPage() {
       .from('messages')
       .update({ content: text, edited_at: new Date().toISOString() })
       .eq('id', messageId);
-    if (error) {
-      console.error(error);
-      alert('⚠️ Failed to edit: ' + error.message);
-    }
+    if (error) alert('⚠️ Failed to edit: ' + error.message);
   }
 
   async function deleteMessage(messageId: number) {
     if (!confirm('Delete this message?')) return;
     const backup = messages;
     setMessages((prev) => prev.filter((m) => m.id !== messageId));
-
     const { error } = await supabase
       .from('messages')
       .delete()
       .eq('id', messageId);
     if (error) {
-      console.error(error);
       setMessages(backup);
       alert('⚠️ Failed to delete: ' + error.message);
     }
@@ -510,22 +495,20 @@ export default function ChatPage() {
     });
 
     if (mine) {
-      const { error } = await supabase
+      await supabase
         .from('reactions')
         .delete()
         .eq('source', 'chat')
         .eq('message_id', mid)
         .eq('user_email', email)
         .eq('emoji', emoji);
-      if (error) console.error('unreact failed:', error);
     } else {
-      const { error } = await supabase.from('reactions').insert({
+      await supabase.from('reactions').insert({
         source: 'chat',
         message_id: mid,
         user_email: email,
         emoji,
       });
-      if (error) console.error('react failed:', error);
     }
   }
 
@@ -614,305 +597,309 @@ export default function ChatPage() {
         display: 'flex',
         flexDirection: 'column',
         minHeight: 0,
-        padding: '0 4px',
       }}
     >
       <div
         className="flex-1 min-h-0 flex flex-col border-4 border-black bg-white rounded-2xl overflow-hidden relative"
-        style={{ boxShadow: '8px 8px 0px 0px rgba(0,0,0,1)' }}
+        style={{ boxShadow: '5px 5px 0px 0px rgba(0,0,0,1)' }}
       >
-        <div
-          ref={scrollRef}
-          onScroll={handleScroll}
-          className="flex-1 min-h-0 overflow-y-auto"
-          style={{ padding: '20px 20px 8px', ...getBgStyle(chatBg) }}
-        >
-          {messages.length === 0 && (
-            <p className="text-black/50 text-center italic py-8 text-sm">
-              no messages yet — say hi 👋
-            </p>
-          )}
+        <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+          <HiddenScroll
+            topPadding={14}
+            sidePadding={14}
+            bottomPadding={8}
+            onScroll={handleScroll}
+            style={getBgStyle(chatBg)}
+          >
+            {messages.length === 0 && (
+              <p className="text-black/50 text-center italic py-8 text-sm">
+                no messages yet — say hi 👋
+              </p>
+            )}
 
-          <div className="flex flex-col" style={{ gap: '4px' }}>
-            {messages.map((m, i) => {
-              const mine = m.user_email === email;
-              const sender = m.user_email.split('@')[0];
-              const prev = messages[i - 1];
-              const isNewGroup = !prev || prev.user_email !== m.user_email;
-              const time = new Date(m.created_at).toLocaleTimeString('en-IN', {
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: timeFormat !== '24h',
-              });
-              const isEditing = editingId === m.id;
-              const repliedTo = findMessageById(m.reply_to_id);
-              const isHighlighted = highlight?.id === m.id;
+            <div className="flex flex-col" style={{ gap: '4px' }}>
+              {messages.map((m, i) => {
+                const mine = m.user_email === email;
+                const sender = m.user_email.split('@')[0];
+                const prev = messages[i - 1];
+                const isNewGroup = !prev || prev.user_email !== m.user_email;
+                const time = new Date(m.created_at).toLocaleTimeString('en-IN', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  hour12: timeFormat !== '24h',
+                });
+                const isEditing = editingId === m.id;
+                const repliedTo = findMessageById(m.reply_to_id);
+                const isHighlighted = highlight?.id === m.id;
 
-              const msgReactions = reactions[String(m.id)] ?? {};
-              const reactionEntries = Object.entries(msgReactions)
-                .filter(([, emails]) => emails.length > 0)
-                .sort((a, b) => b[1].length - a[1].length);
+                const msgReactions = reactions[String(m.id)] ?? {};
+                const reactionEntries = Object.entries(msgReactions)
+                  .filter(([, emails]) => emails.length > 0)
+                  .sort((a, b) => b[1].length - a[1].length);
 
-              return (
-                <div
-                  key={m.id}
-                  id={`msg-${m.id}`}
-                  className={`flex ${mine ? 'msg-mine' : 'msg-theirs'}`}
-                  style={{
-                    justifyContent: mine ? 'flex-end' : 'flex-start',
-                    width: '100%',
-                    marginTop: isNewGroup && i > 0 ? '14px' : '0',
-                    scrollMarginTop: '80px',
-                  }}
-                >
+                return (
                   <div
-                    className="flex flex-col"
+                    key={m.id}
+                    id={`msg-${m.id}`}
+                    className={`flex ${mine ? 'msg-mine' : 'msg-theirs'}`}
                     style={{
-                      maxWidth: '78%',
-                      alignItems: mine ? 'flex-end' : 'flex-start',
+                      justifyContent: mine ? 'flex-end' : 'flex-start',
+                      width: '100%',
+                      marginTop: isNewGroup && i > 0 ? '12px' : '0',
+                      scrollMarginTop: '60px',
                     }}
                   >
-                    {isNewGroup && (
-                      <div
-                        className="msg-meta text-[10px] font-black uppercase tracking-wider"
-                        style={{
-                          color: chatMetaColor,
-                          marginBottom: '6px',
-                          paddingLeft: '4px',
-                          paddingRight: '4px',
-                          textShadow: chatBgDark
-                            ? '0 1px 2px rgba(0,0,0,0.8)'
-                            : 'none',
-                        }}
-                      >
-                        {mine ? 'you' : sender} · {time}
-                      </div>
-                    )}
-
                     <div
-                      onContextMenu={(e) => handleRightClick(e, m)}
-                      onTouchStart={(e) => handleTouchStart(e, m)}
-                      onTouchEnd={handleTouchEnd}
-                      onTouchMove={handleTouchEnd}
-                      className="inline-block border-2 border-black rounded-2xl cursor-pointer select-none"
+                      className="flex flex-col"
                       style={{
-                        padding: '9px 14px',
-                        backgroundColor: mine ? '#E2F0D9' : '#FFD1DC',
-                        boxShadow: '2px 2px 0px 0px rgba(0,0,0,1)',
-                        minWidth: '80px',
-                        position: 'relative',
+                        maxWidth: '82%',
+                        alignItems: mine ? 'flex-end' : 'flex-start',
                       }}
                     >
-                      {isHighlighted && (
+                      {isNewGroup && (
                         <div
-                          key={highlight?.key}
-                          aria-hidden
+                          className="msg-meta text-[10px] font-black uppercase tracking-wider"
                           style={{
-                            position: 'absolute',
-                            inset: -8,
-                            border: '4px solid #FF8BA7',
-                            borderRadius: 24,
-                            background: 'rgba(255,245,186,0.55)',
-                            pointerEvents: 'none',
-                            boxShadow: '0 0 20px rgba(255,139,167,0.7)',
-                            animation: 'msg-flash-fade 1.6s ease-out forwards',
-                            zIndex: 10,
-                          }}
-                        />
-                      )}
-
-                      {repliedTo && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            jumpToMessage(repliedTo.id);
-                          }}
-                          className="rounded-lg border-l-4 border-black text-left w-full"
-                          style={{
-                            backgroundColor: 'rgba(0,0,0,0.08)',
-                            padding: '3px 8px',
+                            color: chatMetaColor,
                             marginBottom: '5px',
-                            cursor: 'pointer',
-                            display: 'block',
-                            maxWidth: '100%',
-                            border: 'none',
-                            borderLeft: '4px solid black',
+                            paddingLeft: '4px',
+                            paddingRight: '4px',
+                            textShadow: chatBgDark
+                              ? '0 1px 2px rgba(0,0,0,0.8)'
+                              : 'none',
                           }}
                         >
-                          <p
-                            style={{
-                              fontSize: '8px',
-                              fontWeight: 900,
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.06em',
-                              color: 'rgba(0,0,0,0.5)',
-                              margin: 0,
-                              lineHeight: 1.2,
-                            }}
-                          >
-                            {repliedTo.user_email === email
-                              ? 'you'
-                              : repliedTo.user_email.split('@')[0]}
-                          </p>
-                          <p
-                            style={{
-                              fontSize: '10px',
-                              fontWeight: 700,
-                              color: 'rgba(0,0,0,0.65)',
-                              margin: '1px 0 0',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                              lineHeight: 1.3,
-                            }}
-                          >
-                            {previewOf(repliedTo.content, 25)}
-                          </p>
-                        </button>
-                      )}
-
-                      {isEditing ? (
-                        <div
-                          className="flex flex-col"
-                          style={{ gap: '6px', minWidth: '180px' }}
-                        >
-                          <textarea
-                            value={editText}
-                            onChange={(e) => setEditText(e.target.value)}
-                            autoFocus
-                            rows={2}
-                            style={{
-                              border: '2px solid black',
-                              borderRadius: '8px',
-                              padding: '6px 10px',
-                              fontSize: '13.5px',
-                              fontFamily: 'inherit',
-                              resize: 'none',
-                              outline: 'none',
-                              backgroundColor: 'white',
-                              color: '#000',
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' && !e.shiftKey) {
-                                e.preventDefault();
-                                saveEdit(m.id);
-                              }
-                              if (e.key === 'Escape') {
-                                setEditingId(null);
-                                setEditText('');
-                              }
-                            }}
-                          />
-                          <div className="flex" style={{ gap: '6px' }}>
-                            <button
-                              onClick={() => saveEdit(m.id)}
-                              className="border-2 border-black rounded-lg font-black"
-                              style={{
-                                padding: '4px 12px',
-                                fontSize: '11px',
-                                backgroundColor: '#E2F0D9',
-                                color: '#000',
-                              }}
-                            >
-                              save
-                            </button>
-                            <button
-                              onClick={() => {
-                                setEditingId(null);
-                                setEditText('');
-                              }}
-                              className="border-2 border-black rounded-lg font-black"
-                              style={{
-                                padding: '4px 12px',
-                                fontSize: '11px',
-                                backgroundColor: '#FFD1DC',
-                                color: '#000',
-                              }}
-                            >
-                              cancel
-                            </button>
-                          </div>
+                          {mine ? 'you' : sender} · {time}
                         </div>
-                      ) : (
-                        <p
-                          className="text-black m-0"
-                          style={{
-                            fontSize: '13.5px',
-                            lineHeight: 1.4,
-                            wordBreak: 'break-word',
-                            whiteSpace: 'pre-wrap',
-                          }}
-                        >
-                          {m.content}
-                          {m.edited_at && (
-                            <span
-                              style={{
-                                fontSize: '9px',
-                                color: 'rgba(0,0,0,0.4)',
-                                marginLeft: '6px',
-                                fontWeight: 700,
-                              }}
-                            >
-                              (edited)
-                            </span>
-                          )}
-                        </p>
                       )}
-                    </div>
 
-                    {reactionEntries.length > 0 && (
                       <div
-                        className="flex flex-wrap"
+                        onContextMenu={(e) => handleRightClick(e, m)}
+                        onTouchStart={(e) => handleTouchStart(e, m)}
+                        onTouchEnd={handleTouchEnd}
+                        onTouchMove={handleTouchEnd}
+                        className="inline-block border-2 border-black rounded-2xl cursor-pointer select-none"
                         style={{
-                          gap: '4px',
-                          marginTop: '4px',
-                          paddingLeft: mine ? '0' : '2px',
-                          paddingRight: mine ? '2px' : '0',
-                          justifyContent: mine ? 'flex-end' : 'flex-start',
+                          padding: '8px 12px',
+                          backgroundColor: mine ? '#E2F0D9' : '#FFD1DC',
+                          boxShadow: '2px 2px 0px 0px rgba(0,0,0,1)',
+                          minWidth: '70px',
+                          position: 'relative',
                         }}
                       >
-                        {reactionEntries.map(([emoji, emails]) => {
-                          const isMine = !!email && emails.includes(email);
-                          return (
-                            <button
-                              key={emoji}
-                              onClick={() => toggleReaction(m.id, emoji)}
+                        {isHighlighted && (
+                          <div
+                            key={highlight?.key}
+                            aria-hidden
+                            style={{
+                              position: 'absolute',
+                              inset: -8,
+                              border: '4px solid #FF8BA7',
+                              borderRadius: 24,
+                              background: 'rgba(255,245,186,0.55)',
+                              pointerEvents: 'none',
+                              boxShadow: '0 0 20px rgba(255,139,167,0.7)',
+                              animation:
+                                'msg-flash-fade 1.6s ease-out forwards',
+                              zIndex: 10,
+                            }}
+                          />
+                        )}
+
+                        {repliedTo && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              jumpToMessage(repliedTo.id);
+                            }}
+                            className="rounded-lg text-left w-full"
+                            style={{
+                              backgroundColor: 'rgba(0,0,0,0.08)',
+                              padding: '3px 8px',
+                              marginBottom: '5px',
+                              cursor: 'pointer',
+                              display: 'block',
+                              maxWidth: '100%',
+                              border: 'none',
+                              borderLeft: '4px solid black',
+                            }}
+                          >
+                            <p
                               style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px',
-                                padding: '2px 8px',
-                                border: '2px solid black',
-                                borderRadius: '999px',
-                                background: isMine
-                                  ? 'linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #FF8BA7'
-                                  : 'linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #FFFDF5',
-                                cursor: 'pointer',
-                                boxShadow: '2px 2px 0 0 black',
-                                fontSize: '11px',
+                                fontSize: '8px',
                                 fontWeight: 900,
-                                color: '#000',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.06em',
+                                color: 'rgba(0,0,0,0.5)',
+                                margin: 0,
                                 lineHeight: 1.2,
                               }}
-                              aria-label={`${emoji} ${emails.length}`}
                             >
-                              <span style={{ fontSize: '12px', lineHeight: 1 }}>
-                                {emoji}
+                              {repliedTo.user_email === email
+                                ? 'you'
+                                : repliedTo.user_email.split('@')[0]}
+                            </p>
+                            <p
+                              style={{
+                                fontSize: '10px',
+                                fontWeight: 700,
+                                color: 'rgba(0,0,0,0.65)',
+                                margin: '1px 0 0',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                lineHeight: 1.3,
+                              }}
+                            >
+                              {previewOf(repliedTo.content, 25)}
+                            </p>
+                          </button>
+                        )}
+
+                        {isEditing ? (
+                          <div
+                            className="flex flex-col"
+                            style={{ gap: '6px', minWidth: '180px' }}
+                          >
+                            <textarea
+                              value={editText}
+                              onChange={(e) => setEditText(e.target.value)}
+                              autoFocus
+                              rows={2}
+                              style={{
+                                border: '2px solid black',
+                                borderRadius: '8px',
+                                padding: '6px 10px',
+                                fontSize: '13.5px',
+                                fontFamily: 'inherit',
+                                resize: 'none',
+                                outline: 'none',
+                                backgroundColor: 'white',
+                                color: '#000',
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                  e.preventDefault();
+                                  saveEdit(m.id);
+                                }
+                                if (e.key === 'Escape') {
+                                  setEditingId(null);
+                                  setEditText('');
+                                }
+                              }}
+                            />
+                            <div className="flex" style={{ gap: '6px' }}>
+                              <button
+                                onClick={() => saveEdit(m.id)}
+                                className="border-2 border-black rounded-lg font-black"
+                                style={{
+                                  padding: '4px 12px',
+                                  fontSize: '11px',
+                                  backgroundColor: '#E2F0D9',
+                                  color: '#000',
+                                }}
+                              >
+                                save
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setEditingId(null);
+                                  setEditText('');
+                                }}
+                                className="border-2 border-black rounded-lg font-black"
+                                style={{
+                                  padding: '4px 12px',
+                                  fontSize: '11px',
+                                  backgroundColor: '#FFD1DC',
+                                  color: '#000',
+                                }}
+                              >
+                                cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p
+                            className="text-black m-0"
+                            style={{
+                              fontSize: '13.5px',
+                              lineHeight: 1.4,
+                              wordBreak: 'break-word',
+                              whiteSpace: 'pre-wrap',
+                            }}
+                          >
+                            {m.content}
+                            {m.edited_at && (
+                              <span
+                                style={{
+                                  fontSize: '9px',
+                                  color: 'rgba(0,0,0,0.4)',
+                                  marginLeft: '6px',
+                                  fontWeight: 700,
+                                }}
+                              >
+                                (edited)
                               </span>
-                              <span style={{ fontSize: '10px' }}>
-                                {emails.length}
-                              </span>
-                            </button>
-                          );
-                        })}
+                            )}
+                          </p>
+                        )}
                       </div>
-                    )}
+
+                      {reactionEntries.length > 0 && (
+                        <div
+                          className="flex flex-wrap"
+                          style={{
+                            gap: '4px',
+                            marginTop: '4px',
+                            paddingLeft: mine ? '0' : '2px',
+                            paddingRight: mine ? '2px' : '0',
+                            justifyContent: mine ? 'flex-end' : 'flex-start',
+                          }}
+                        >
+                          {reactionEntries.map(([emoji, emails]) => {
+                            const isMine = !!email && emails.includes(email);
+                            return (
+                              <button
+                                key={emoji}
+                                onClick={() => toggleReaction(m.id, emoji)}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  padding: '2px 8px',
+                                  border: '2px solid black',
+                                  borderRadius: '999px',
+                                  background: isMine
+                                    ? 'linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #FF8BA7'
+                                    : 'linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #FFFDF5',
+                                  cursor: 'pointer',
+                                  boxShadow: '2px 2px 0 0 black',
+                                  fontSize: '11px',
+                                  fontWeight: 900,
+                                  color: '#000',
+                                  lineHeight: 1.2,
+                                }}
+                              >
+                                <span
+                                  style={{ fontSize: '12px', lineHeight: 1 }}
+                                >
+                                  {emoji}
+                                </span>
+                                <span style={{ fontSize: '10px' }}>
+                                  {emails.length}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-          <div ref={bottomRef} style={{ height: '4px' }} />
+                );
+              })}
+            </div>
+            <div ref={bottomRef} style={{ height: '4px' }} />
+          </HiddenScroll>
         </div>
 
         {newBelow > 0 && (
@@ -920,17 +907,16 @@ export default function ChatPage() {
             onClick={scrollToBottom}
             className="absolute border-2 border-black bg-[#FF8BA7] text-black font-black rounded-full transition hover:-translate-y-0.5 active:translate-y-0.5"
             style={{
-              bottom: replyTo ? '160px' : '76px',
+              bottom: replyTo ? '150px' : '68px',
               left: '50%',
               transform: 'translateX(-50%)',
               padding: '6px 14px',
               fontSize: '11px',
               boxShadow: '3px 3px 0 0 black',
               zIndex: 5,
-              animation: 'fade-up 0.25s ease-out both',
             }}
           >
-            ↓ {newBelow} new message{newBelow > 1 ? 's' : ''}
+            ↓ {newBelow} new
           </button>
         )}
 
@@ -939,8 +925,8 @@ export default function ChatPage() {
             className="border-t-4 border-black flex items-center"
             style={{
               backgroundColor: '#FFF5BA',
-              padding: '8px 12px',
-              gap: '10px',
+              padding: '8px 10px',
+              gap: '8px',
               flexShrink: 0,
             }}
           >
@@ -963,26 +949,25 @@ export default function ChatPage() {
               <p
                 style={{
                   margin: '3px 0 0',
-                  fontSize: '12px',
+                  fontSize: '11px',
                   color: 'rgba(0,0,0,0.6)',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
                 }}
               >
-                {previewOf(replyTo.content, 60)}
+                {previewOf(replyTo.content, 50)}
               </p>
             </div>
             <button
               onClick={() => setReplyTo(null)}
               className="border-2 border-black bg-[#FFD1DC] text-black font-black rounded-lg shrink-0"
               style={{
-                width: '28px',
-                height: '28px',
+                width: '26px',
+                height: '26px',
                 lineHeight: 1,
-                fontSize: '13px',
+                fontSize: '12px',
               }}
-              aria-label="Cancel reply"
             >
               ✕
             </button>
@@ -992,7 +977,7 @@ export default function ChatPage() {
         <form
           onSubmit={handleSend}
           className="border-t-4 border-black bg-[#E6E6FA] flex shrink-0 items-stretch"
-          style={{ padding: '12px', gap: '10px' }}
+          style={{ padding: '10px', gap: '8px' }}
         >
           <input
             type="text"
@@ -1001,19 +986,16 @@ export default function ChatPage() {
             placeholder="type a message..."
             disabled={sending}
             className="flex-1 min-w-0 border-2 border-black rounded-lg bg-white text-black text-sm focus:outline-none disabled:opacity-50"
-            style={{ padding: '11px 16px' }}
+            style={{ padding: '10px 12px' }}
           />
           <button
             type="submit"
             disabled={sending || !input.trim()}
-            className="inline-flex items-center border-2 border-black bg-[#E2F0D9] text-black text-xs font-black rounded-lg shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition disabled:opacity-50 disabled:hover:translate-y-0 shrink-0"
-            style={{ padding: '11px 18px', gap: '8px' }}
+            className="inline-flex items-center justify-center border-2 border-black bg-[#E2F0D9] text-black text-xs font-black rounded-lg shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition disabled:opacity-50 disabled:hover:translate-y-0 shrink-0"
+            style={{ padding: '10px 14px', minWidth: '56px' }}
           >
             <span className="text-sm leading-none">
               {sending ? '···' : '▶'}
-            </span>
-            <span className="leading-none tracking-wider hidden sm:inline">
-              {sending ? 'SENDING' : 'SEND'}
             </span>
           </button>
         </form>
@@ -1025,209 +1007,202 @@ export default function ChatPage() {
   // SLIDE 2: CREW
   // ====================================
   const crewSlide = (
-    <div
-      style={{
-        height: '100%',
-        overflowY: 'auto',
-        padding: '0 4px 16px',
-        WebkitOverflowScrolling: 'touch',
-      }}
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <div
-          style={{
-            border: '4px solid black',
-            borderRadius: '22px',
-            background: `
-              linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%),
-              rgba(230,230,250,0.92)
-            `,
-            backdropFilter: 'blur(14px) saturate(160%)',
-            WebkitBackdropFilter: 'blur(14px) saturate(160%)',
-            padding: '16px',
-            boxShadow: `
-              6px 6px 0 0 black,
-              inset 0 1px 0 rgba(255,255,255,0.7)
-            `,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '12px',
-          }}
-        >
-          <div>
-            <p
-              style={{
-                margin: 0,
-                fontSize: '11px',
-                fontWeight: 900,
-                color: '#000',
-                textTransform: 'uppercase',
-                letterSpacing: '0.1em',
-              }}
-            >
-              👥 in the portal
-            </p>
-            <p
-              style={{
-                margin: '6px 0 0',
-                fontSize: '22px',
-                fontWeight: 900,
-                color: '#000',
-                lineHeight: 1,
-              }}
-            >
-              {crewOnlineIds.length}
-              <span
-                style={{
-                  fontSize: '13px',
-                  fontWeight: 800,
-                  color: 'rgba(0,0,0,0.5)',
-                  marginLeft: '6px',
-                }}
-              >
-                online
-              </span>
-            </p>
-          </div>
-          <span
-            className="gloss-shine"
+    <div style={{ height: '100%', position: 'relative' }}>
+      <HiddenScroll sidePadding={14} topPadding={4} bottomPadding={20}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div
             style={{
-              width: '56px',
-              height: '56px',
-              borderRadius: '999px',
               border: '4px solid black',
+              borderRadius: '18px',
               background: `
-                linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
-                #E2F0D9
+                linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%),
+                rgba(230,230,250,0.92)
+              `,
+              padding: '14px',
+              boxShadow: `
+                4px 4px 0 0 black,
+                inset 0 1px 0 rgba(255,255,255,0.7)
               `,
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '24px',
-              boxShadow: '3px 3px 0 0 black',
-              flexShrink: 0,
+              justifyContent: 'space-between',
+              gap: '12px',
             }}
           >
-            🟢
-          </span>
-        </div>
-
-        {crewLoading ? (
-          <p
-            style={{
-              textAlign: 'center',
-              color: 'rgba(255,253,245,0.5)',
-              fontSize: '12px',
-              padding: '30px 0',
-              fontWeight: 700,
-              margin: 0,
-            }}
-          >
-            loading crew...
-          </p>
-        ) : (
-          [...crewProfiles]
-            .sort((a, b) => {
-              const aOn = crewOnlineIds.includes(a.id);
-              const bOn = crewOnlineIds.includes(b.id);
-              if (aOn !== bOn) return aOn ? -1 : 1;
-              const aCount = crewCounts[a.email] ?? 0;
-              const bCount = crewCounts[b.email] ?? 0;
-              return bCount - aCount;
-            })
-            .map((p, i) => {
-              const isOnline = crewOnlineIds.includes(p.id);
-              const isMe = p.id === userId;
-              const label = displayLabel(p.email, p.display_name);
-              const initials = initialsFor(p.email, p.display_name);
-              const avatarBg =
-                p.avatar_color || AVATAR_COLORS[i % AVATAR_COLORS.length];
-              const count = crewCounts[p.email] ?? 0;
-
-              return (
-                <div
-                  key={p.id}
+            <div>
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: '11px',
+                  fontWeight: 900,
+                  color: '#000',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.1em',
+                }}
+              >
+                👥 in the portal
+              </p>
+              <p
+                style={{
+                  margin: '6px 0 0',
+                  fontSize: '22px',
+                  fontWeight: 900,
+                  color: '#000',
+                  lineHeight: 1,
+                }}
+              >
+                {crewOnlineIds.length}
+                <span
                   style={{
-                    border: '4px solid black',
-                    borderRadius: '22px',
-                    background: `
-                      linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%),
-                      #FFFDF5
-                    `,
-                    padding: '14px 16px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '14px',
-                    boxShadow: '4px 4px 0 0 black',
+                    fontSize: '13px',
+                    fontWeight: 800,
+                    color: 'rgba(0,0,0,0.5)',
+                    marginLeft: '6px',
                   }}
                 >
-                  <div style={{ position: 'relative', flexShrink: 0 }}>
-                    <div
-                      className="gloss-shine"
-                      style={{
-                        width: '48px',
-                        height: '48px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        borderRadius: '999px',
-                        border: '3px solid black',
-                        background: `
-                          linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
-                          ${avatarBg}
-                        `,
-                        fontWeight: 900,
-                        fontSize: '13px',
-                        color: '#000',
-                      }}
-                    >
-                      {initials}
+                  online
+                </span>
+              </p>
+            </div>
+            <span
+              className="gloss-shine"
+              style={{
+                width: '48px',
+                height: '48px',
+                borderRadius: '999px',
+                border: '4px solid black',
+                background: `
+                  linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
+                  #E2F0D9
+                `,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '20px',
+                boxShadow: '3px 3px 0 0 black',
+                flexShrink: 0,
+              }}
+            >
+              🟢
+            </span>
+          </div>
+
+          {crewLoading ? (
+            <p
+              style={{
+                textAlign: 'center',
+                color: 'rgba(255,253,245,0.5)',
+                fontSize: '12px',
+                padding: '30px 0',
+                fontWeight: 700,
+                margin: 0,
+              }}
+            >
+              loading crew...
+            </p>
+          ) : (
+            [...crewProfiles]
+              .sort((a, b) => {
+                const aOn = crewOnlineIds.includes(a.id);
+                const bOn = crewOnlineIds.includes(b.id);
+                if (aOn !== bOn) return aOn ? -1 : 1;
+                const aCount = crewCounts[a.email] ?? 0;
+                const bCount = crewCounts[b.email] ?? 0;
+                return bCount - aCount;
+              })
+              .map((p, i) => {
+                const isOnline = crewOnlineIds.includes(p.id);
+                const isMe = p.id === userId;
+                const label = displayLabel(p.email, p.display_name);
+                const initials = initialsFor(p.email, p.display_name);
+                const avatarBg =
+                  p.avatar_color || AVATAR_COLORS[i % AVATAR_COLORS.length];
+                const count = crewCounts[p.email] ?? 0;
+
+                return (
+                  <div
+                    key={p.id}
+                    style={{
+                      border: '4px solid black',
+                      borderRadius: '18px',
+                      background: `
+                        linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%),
+                        #FFFDF5
+                      `,
+                      padding: '12px 14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      boxShadow: '3px 3px 0 0 black',
+                    }}
+                  >
+                    <div style={{ position: 'relative', flexShrink: 0 }}>
+                      <div
+                        className="gloss-shine"
+                        style={{
+                          width: '44px',
+                          height: '44px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          borderRadius: '999px',
+                          border: '3px solid black',
+                          background: `
+                            linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
+                            ${avatarBg}
+                          `,
+                          fontWeight: 900,
+                          fontSize: '12px',
+                          color: '#000',
+                        }}
+                      >
+                        {initials}
+                      </div>
+                      <span
+                        style={{
+                          position: 'absolute',
+                          bottom: '-2px',
+                          right: '-2px',
+                          width: '14px',
+                          height: '14px',
+                          borderRadius: '999px',
+                          border: '3px solid black',
+                          backgroundColor: isOnline ? '#7FB89B' : '#D8D0C0',
+                        }}
+                      />
                     </div>
-                    <span
-                      style={{
-                        position: 'absolute',
-                        bottom: '-2px',
-                        right: '-2px',
-                        width: '16px',
-                        height: '16px',
-                        borderRadius: '999px',
-                        border: '3px solid black',
-                        backgroundColor: isOnline ? '#7FB89B' : '#D8D0C0',
-                      }}
-                    />
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <p
+                        style={{
+                          margin: 0,
+                          fontWeight: 900,
+                          fontSize: '14px',
+                          color: '#000',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {isMe ? `${label} (you)` : label}
+                      </p>
+                      <p
+                        style={{
+                          margin: '3px 0 0',
+                          fontSize: '10px',
+                          fontWeight: 800,
+                          color: isOnline ? '#3A7A5E' : 'rgba(0,0,0,0.45)',
+                        }}
+                      >
+                        {isOnline ? 'in the portal' : 'away'} · {count}{' '}
+                        message{count === 1 ? '' : 's'}
+                      </p>
+                    </div>
                   </div>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <p
-                      style={{
-                        margin: 0,
-                        fontWeight: 900,
-                        fontSize: '14px',
-                        color: '#000',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {isMe ? `${label} (you)` : label}
-                    </p>
-                    <p
-                      style={{
-                        margin: '3px 0 0',
-                        fontSize: '10px',
-                        fontWeight: 800,
-                        color: isOnline ? '#3A7A5E' : 'rgba(0,0,0,0.45)',
-                      }}
-                    >
-                      {isOnline ? 'in the portal' : 'away'} · {count}{' '}
-                      message{count === 1 ? '' : 's'}
-                    </p>
-                  </div>
-                </div>
-              );
-            })
-        )}
-      </div>
+                );
+              })
+          )}
+        </div>
+      </HiddenScroll>
     </div>
   );
 
@@ -1235,169 +1210,173 @@ export default function ChatPage() {
   // SLIDE 3: PULSE
   // ====================================
   const pulseSlide = (
-    <div
-      style={{
-        height: '100%',
-        overflowY: 'auto',
-        padding: '0 4px 16px',
-        WebkitOverflowScrolling: 'touch',
-      }}
-    >
-      {pulseLoading ? (
-        <p
-          style={{
-            textAlign: 'center',
-            color: 'rgba(255,253,245,0.5)',
-            fontSize: '12px',
-            padding: '40px 0',
-            fontWeight: 700,
-            margin: 0,
-          }}
-        >
-          loading pulse...
-        </p>
-      ) : (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(2, 1fr)',
-            gap: '12px',
-          }}
-        >
-          <StatCard
-            emoji="💬"
-            label="total"
-            value={pulseTotal.toString()}
-            color="#E2F0D9"
-          />
-          <StatCard
-            emoji="🔥"
-            label="today"
-            value={pulseToday.toString()}
-            color="#FFD1DC"
-          />
-          <StatCard
-            emoji="📅"
-            label="last 7 days"
-            value={pulseWeek.toString()}
-            color="#FFF5BA"
-          />
-          <StatCard
-            emoji="⏰"
-            label="busiest hour"
-            value={
-              pulseBusiestHour === null ? '—' : formatHour(pulseBusiestHour)
-            }
-            color="#D4F0F0"
-          />
+    <div style={{ height: '100%', position: 'relative' }}>
+      <HiddenScroll sidePadding={14} topPadding={4} bottomPadding={20}>
+        {pulseLoading ? (
+          <p
+            style={{
+              textAlign: 'center',
+              color: 'rgba(255,253,245,0.5)',
+              fontSize: '12px',
+              padding: '40px 0',
+              fontWeight: 700,
+              margin: 0,
+            }}
+          >
+            loading pulse...
+          </p>
+        ) : (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, 1fr)',
+              gap: '10px',
+            }}
+          >
+            <StatCard
+              emoji="💬"
+              label="total"
+              value={pulseTotal.toString()}
+              color="#E2F0D9"
+            />
+            <StatCard
+              emoji="🔥"
+              label="today"
+              value={pulseToday.toString()}
+              color="#FFD1DC"
+            />
+            <StatCard
+              emoji="📅"
+              label="last 7 days"
+              value={pulseWeek.toString()}
+              color="#FFF5BA"
+            />
+            <StatCard
+              emoji="⏰"
+              label="busiest hour"
+              value={
+                pulseBusiestHour === null ? '—' : formatHour(pulseBusiestHour)
+              }
+              color="#D4F0F0"
+              sub={
+                pulseBusiestDay
+                  ? `on ${new Date(
+                      pulseBusiestDay + 'T00:00:00'
+                    ).toLocaleDateString('en-IN', {
+                      weekday: 'short',
+                      day: 'numeric',
+                      month: 'short',
+                    })}`
+                  : 'past 7 days'
+              }
+            />
 
-          <div style={{ gridColumn: '1 / -1' }}>
-            {pulseTopSender ? (
-              <div
-                style={{
-                  border: '4px solid black',
-                  borderRadius: '22px',
-                  background: `
-                    linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%),
-                    rgba(230,230,250,0.92)
-                  `,
-                  backdropFilter: 'blur(14px) saturate(160%)',
-                  WebkitBackdropFilter: 'blur(14px) saturate(160%)',
-                  padding: '18px 20px',
-                  boxShadow: `
-                    6px 6px 0 0 black,
-                    inset 0 1px 0 rgba(255,255,255,0.7)
-                  `,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '14px',
-                }}
-              >
-                <span
-                  className="gloss-shine"
+            <div style={{ gridColumn: '1 / -1' }}>
+              {pulseTopSender ? (
+                <div
                   style={{
-                    width: '52px',
-                    height: '52px',
-                    borderRadius: '999px',
                     border: '4px solid black',
+                    borderRadius: '18px',
                     background: `
-                      linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
-                      #FF8BA7
+                      linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%),
+                      rgba(230,230,250,0.92)
+                    `,
+                    padding: '14px 16px',
+                    boxShadow: `
+                      4px 4px 0 0 black,
+                      inset 0 1px 0 rgba(255,255,255,0.7)
                     `,
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '22px',
-                    boxShadow: '3px 3px 0 0 black',
-                    flexShrink: 0,
+                    gap: '12px',
                   }}
                 >
-                  👑
-                </span>
-                <div style={{ minWidth: 0, flex: 1 }}>
+                  <span
+                    className="gloss-shine"
+                    style={{
+                      width: '44px',
+                      height: '44px',
+                      borderRadius: '999px',
+                      border: '4px solid black',
+                      background: `
+                        linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
+                        #FF8BA7
+                      `,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '20px',
+                      boxShadow: '3px 3px 0 0 black',
+                      flexShrink: 0,
+                    }}
+                  >
+                    👑
+                  </span>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: '10px',
+                        fontWeight: 900,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.1em',
+                        color: 'rgba(0,0,0,0.5)',
+                      }}
+                    >
+                      top talker · last 7 days
+                    </p>
+                    <p
+                      style={{
+                        margin: '4px 0 0',
+                        fontSize: '15px',
+                        fontWeight: 900,
+                        color: '#000',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {pulseTopSender.email.split('@')[0]}
+                    </p>
+                    <p
+                      style={{
+                        margin: '2px 0 0',
+                        fontSize: '11px',
+                        fontWeight: 800,
+                        color: 'rgba(0,0,0,0.55)',
+                      }}
+                    >
+                      {pulseTopSender.count} messages
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    border: '4px solid black',
+                    borderRadius: '18px',
+                    background: '#FFFDF5',
+                    padding: '30px 20px',
+                    boxShadow: '4px 4px 0 0 black',
+                    textAlign: 'center',
+                  }}
+                >
                   <p
                     style={{
                       margin: 0,
-                      fontSize: '10px',
-                      fontWeight: 900,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.1em',
-                      color: 'rgba(0,0,0,0.5)',
-                    }}
-                  >
-                    top talker · last 7 days
-                  </p>
-                  <p
-                    style={{
-                      margin: '4px 0 0',
-                      fontSize: '16px',
-                      fontWeight: 900,
-                      color: '#000',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {pulseTopSender.email.split('@')[0]}
-                  </p>
-                  <p
-                    style={{
-                      margin: '2px 0 0',
-                      fontSize: '11px',
                       fontWeight: 800,
-                      color: 'rgba(0,0,0,0.55)',
+                      fontSize: '13px',
+                      color: '#000',
                     }}
                   >
-                    {pulseTopSender.count} messages
+                    no messages yet
                   </p>
                 </div>
-              </div>
-            ) : (
-              <div
-                style={{
-                  border: '4px solid black',
-                  borderRadius: '22px',
-                  background: '#FFFDF5',
-                  padding: '30px 20px',
-                  boxShadow: '6px 6px 0 0 black',
-                  textAlign: 'center',
-                }}
-              >
-                <p
-                  style={{
-                    margin: 0,
-                    fontWeight: 800,
-                    fontSize: '13px',
-                    color: '#000',
-                  }}
-                >
-                  no messages yet — say something!
-                </p>
-              </div>
-            )}
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </HiddenScroll>
     </div>
   );
 
@@ -1409,32 +1388,36 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="fixed inset-0 bg-[#1a0b2e] font-mono flex justify-center overflow-hidden">
+    <div className="fixed inset-0 bg-[#1a0b2e] font-mono flex flex-col overflow-hidden">
       <div
-        className="w-full max-w-3xl h-full flex flex-col p-3 sm:p-6 gap-3 sm:gap-4"
-        style={{ minHeight: 0 }}
+        className="mx-auto flex w-full max-w-3xl flex-1 min-h-0 flex-col gap-2 sm:gap-4"
+        style={{
+          paddingTop: 'max(8px, env(safe-area-inset-top))',
+          paddingBottom: 'max(8px, env(safe-area-inset-bottom))',
+          paddingLeft: 'max(8px, env(safe-area-inset-left))',
+          paddingRight: 'max(8px, env(safe-area-inset-right))',
+        }}
       >
         <div className="flex items-center justify-between shrink-0 gap-2">
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
             <div
-              className="gloss-shine flex size-10 sm:size-12 shrink-0 items-center justify-center rounded-2xl border-4 border-black"
+              className="gloss-shine flex size-10 shrink-0 items-center justify-center rounded-2xl border-4 border-black"
               style={{
                 background: `
                   linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
                   #E6E6FA
                 `,
-                fontSize: '20px',
+                fontSize: '18px',
               }}
             >
               💬
             </div>
             <div className="min-w-0">
-              <h1 className="truncate font-black text-lg sm:text-2xl leading-tight text-white">
+              <h1 className="truncate font-black text-lg leading-tight text-white">
                 squad chat
               </h1>
-              <p className="text-[10px] sm:text-xs font-bold leading-tight text-white/60">
-                the whole crew · {messages.length} message
-                {messages.length === 1 ? '' : 's'}
+              <p className="text-[10px] font-bold leading-tight text-white/60 truncate">
+                {messages.length} message{messages.length === 1 ? '' : 's'}
               </p>
             </div>
           </div>
@@ -1443,13 +1426,15 @@ export default function ChatPage() {
             <BgPickerButton current={chatBg} onChange={handleBgChange} />
             <Link
               href="/"
-              className="inline-flex items-center border-4 border-black bg-[#E2F0D9] text-black font-black rounded-xl shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition"
-              style={{ padding: '8px 16px', gap: '8px' }}
+              className="inline-flex items-center justify-center border-4 border-black bg-[#E2F0D9] text-black font-black rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition shrink-0"
+              style={{
+                padding: '8px 12px',
+                fontSize: '14px',
+                minWidth: '44px',
+                minHeight: '44px',
+              }}
             >
-              <span className="text-base leading-none">←</span>
-              <span className="text-sm leading-none hidden sm:inline">
-                back
-              </span>
+              ←
             </Link>
           </div>
         </div>
@@ -1522,7 +1507,6 @@ export default function ChatPage() {
                     padding: 0,
                     boxShadow: active ? '2px 2px 0 0 black' : 'none',
                   }}
-                  aria-label={`react ${emoji}`}
                 >
                   {emoji}
                 </button>
@@ -1619,33 +1603,35 @@ function StatCard({
   label,
   value,
   color,
+  sub,
 }: {
   emoji: string;
   label: string;
   value: string;
   color: string;
+  sub?: string;
 }) {
   return (
     <div
       style={{
         border: '4px solid black',
-        borderRadius: '22px',
+        borderRadius: '18px',
         background: `
           linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%),
           ${color}
         `,
-        padding: '16px',
+        padding: '14px',
         boxShadow: `
-          5px 5px 0 0 black,
+          4px 4px 0 0 black,
           inset 0 1px 0 rgba(255,255,255,0.7)
         `,
         display: 'flex',
         flexDirection: 'column',
-        gap: '6px',
-        minHeight: '110px',
+        gap: '4px',
+        minHeight: '92px',
       }}
     >
-      <span style={{ fontSize: '22px', lineHeight: 1 }}>{emoji}</span>
+      <span style={{ fontSize: '20px', lineHeight: 1 }}>{emoji}</span>
       <p
         style={{
           margin: 0,
@@ -1661,7 +1647,7 @@ function StatCard({
       <p
         style={{
           margin: 0,
-          fontSize: '22px',
+          fontSize: '20px',
           fontWeight: 900,
           color: '#000',
           lineHeight: 1,
@@ -1669,6 +1655,20 @@ function StatCard({
       >
         {value}
       </p>
+      {sub && (
+        <p
+          style={{
+            margin: '4px 0 0',
+            fontSize: '9px',
+            fontWeight: 800,
+            color: 'rgba(0,0,0,0.45)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.06em',
+          }}
+        >
+          {sub}
+        </p>
+      )}
     </div>
   );
 }

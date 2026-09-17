@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-import { useProfile } from '@/lib/use-profile';
 import { SwipeCarousel } from '@/components/arnama/swipe-carousel';
+import { HiddenScroll } from '@/components/arnama/hidden-scroll';
 import {
   Upload,
   X,
@@ -63,8 +63,74 @@ function tiltFor(id: string): number {
   return angles[Math.abs(hash) % angles.length];
 }
 
+/** Renders an image with a graceful fallback if the URL is broken. */
+function SafeImg({
+  src,
+  alt,
+  fallbackLabel,
+}: {
+  src: string | null | undefined;
+  alt?: string;
+  fallbackLabel?: string;
+}) {
+  const [broken, setBroken] = useState(false);
+  const valid = !!src && src.trim().length > 0;
+
+  if (!valid || broken) {
+    return (
+      <div
+        style={{
+          width: '100%',
+          height: '100%',
+          background: `
+            linear-gradient(135deg, rgba(255,139,167,0.35) 0%, rgba(230,230,250,0.35) 100%),
+            #000
+          `,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '6px',
+          color: '#fff',
+          textAlign: 'center',
+          padding: '8px',
+        }}
+      >
+        <span style={{ fontSize: '22px', lineHeight: 1 }}>📷</span>
+        <span
+          style={{
+            fontSize: '9px',
+            fontWeight: 900,
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+            opacity: 0.75,
+          }}
+        >
+          {fallbackLabel ?? 'no preview'}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt={alt ?? ''}
+      referrerPolicy="no-referrer"
+      loading="lazy"
+      onError={() => setBroken(true)}
+      style={{
+        width: '100%',
+        height: '100%',
+        objectFit: 'cover',
+        display: 'block',
+      }}
+    />
+  );
+}
+
 export default function PhotosPage() {
-  const { profile } = useProfile();
   const [email, setEmail] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
@@ -84,7 +150,6 @@ export default function PhotosPage() {
 
   const [openPersonEmail, setOpenPersonEmail] = useState<string | null>(null);
 
-  // AUTH
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       const user = data.user;
@@ -103,7 +168,6 @@ export default function PhotosPage() {
     });
   }, []);
 
-  // LOAD
   useEffect(() => {
     if (!email) return;
     supabase
@@ -117,7 +181,6 @@ export default function PhotosPage() {
       });
   }, [email]);
 
-  // REALTIME
   useEffect(() => {
     if (!email) return;
     const ch = supabase
@@ -155,7 +218,6 @@ export default function PhotosPage() {
     };
   }, [email]);
 
-  // UPLOAD
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0 || !email || !userId) return;
     setUploadError('');
@@ -169,7 +231,6 @@ export default function PhotosPage() {
           setUploadError('⚠️ One file is over 8 MB — skipped');
           continue;
         }
-
         const ext = file.name.split('.').pop() || 'jpg';
         const path = `${userId}/${Date.now()}-${Math.random()
           .toString(36)
@@ -183,7 +244,6 @@ export default function PhotosPage() {
           setUploadError('⚠️ Upload failed: ' + upErr.message);
           continue;
         }
-
         const { data: pub } = supabase.storage
           .from('photos')
           .getPublicUrl(path);
@@ -215,7 +275,6 @@ export default function PhotosPage() {
     }
   }
 
-  // DELETE
   async function handleDelete(p: Photo) {
     if (!confirm('Delete this photo?')) return;
     const { error } = await supabase.from('photos').delete().eq('id', p.id);
@@ -227,7 +286,6 @@ export default function PhotosPage() {
     if (lightboxIndex !== null) setLightboxIndex(null);
   }
 
-  // SAVE CAPTION
   async function saveCaption(photoId: string, text: string) {
     const trimmed = text.trim();
     const newCaption = trimmed.length > 0 ? trimmed : null;
@@ -241,7 +299,6 @@ export default function PhotosPage() {
     if (error) alert('⚠️ Failed to save caption: ' + error.message);
   }
 
-  // LIGHTBOX
   function openLightbox(list: Photo[], index: number) {
     setLightboxList(list);
     setLightboxIndex(index);
@@ -281,7 +338,6 @@ export default function PhotosPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [lightboxIndex, lightboxList, editingLightboxCaption]);
 
-  // COMPUTED
   const recentPhotos = useMemo(() => {
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     return photos.filter((p) => new Date(p.created_at).getTime() >= cutoff);
@@ -304,9 +360,6 @@ export default function PhotosPage() {
     );
   }
 
-  // =========================
-  // POLAROID GRID
-  // =========================
   function PolaroidGrid({
     list,
     emptyMessage,
@@ -319,10 +372,10 @@ export default function PhotosPage() {
         <div
           className="border-4 border-black text-center shrink-0"
           style={{
-            borderRadius: '22px',
+            borderRadius: '18px',
             background: '#FFFDF5',
             padding: '40px 20px',
-            boxShadow: '6px 6px 0 0 black',
+            boxShadow: '4px 4px 0 0 black',
           }}
         >
           <div style={{ fontSize: '36px', marginBottom: '10px' }}>📸</div>
@@ -343,11 +396,7 @@ export default function PhotosPage() {
     return (
       <div
         className="grid grid-cols-2 sm:grid-cols-3"
-        style={{
-          gap: '20px 16px',
-          paddingTop: '6px',
-          paddingBottom: '6px',
-        }}
+        style={{ gap: '20px 14px', paddingTop: '6px' }}
       >
         {list.map((p, i) => {
           const mine = p.user_email === email;
@@ -370,13 +419,12 @@ export default function PhotosPage() {
                   `rotate(${tilt}deg)`;
               }}
             >
-              {/* Polaroid card */}
               <div
                 className="border-4 border-black"
                 style={{
                   background: paper,
                   borderRadius: '6px',
-                  boxShadow: '5px 5px 0 0 black',
+                  boxShadow: '4px 4px 0 0 black',
                   padding: '10px 10px 0',
                   display: 'flex',
                   flexDirection: 'column',
@@ -396,21 +444,12 @@ export default function PhotosPage() {
                     display: 'block',
                   }}
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
+                  <SafeImg
                     src={p.url}
                     alt={p.caption ?? ''}
-                    style={{
-                      width: '100%',
-                      height: '100%',
-                      objectFit: 'cover',
-                      display: 'block',
-                    }}
-                    loading="lazy"
+                    fallbackLabel="tap to retry"
                   />
                 </button>
-
-                {/* Caption on the polaroid margin */}
                 <div
                   style={{
                     padding: '10px 4px 12px',
@@ -435,7 +474,6 @@ export default function PhotosPage() {
                         WebkitBoxOrient: 'vertical',
                         wordBreak: 'break-word',
                         maxWidth: '100%',
-                        letterSpacing: '0.01em',
                       }}
                     >
                       {p.caption}
@@ -454,13 +492,13 @@ export default function PhotosPage() {
                 </div>
               </div>
 
-              {/* Delete sticker */}
               {mine && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     handleDelete(p);
                   }}
+                  aria-label="Delete photo"
                   style={{
                     position: 'absolute',
                     top: '-8px',
@@ -482,7 +520,6 @@ export default function PhotosPage() {
                     justifyContent: 'center',
                     transform: 'rotate(8deg)',
                   }}
-                  aria-label="Delete photo"
                 >
                   ✕
                 </button>
@@ -494,555 +531,159 @@ export default function PhotosPage() {
     );
   }
 
-  // =========================
   // SLIDE 1: PHOTOS
-  // =========================
   const photosSlide = (
-    <div
-      style={{
-        height: '100%',
-        overflowY: 'auto',
-        padding: '0 4px 16px',
-        WebkitOverflowScrolling: 'touch',
-      }}
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        {/* Upload card */}
-        <div
-          className="border-4 border-black shrink-0"
-          style={{
-            borderRadius: '22px',
-            background: `
-              linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%),
-              rgba(255,209,220,0.92)
-            `,
-            backdropFilter: 'blur(14px) saturate(160%)',
-            WebkitBackdropFilter: 'blur(14px) saturate(160%)',
-            boxShadow: `
-              6px 6px 0 0 black,
-              inset 0 1px 0 rgba(255,255,255,0.7)
-            `,
-            padding: '14px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '10px',
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            disabled={uploading}
-            className="hover:-translate-y-0.5 active:translate-y-0.5 transition"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '14px',
-              padding: '10px',
-              background: 'transparent',
-              border: 'none',
-              cursor: uploading ? 'wait' : 'pointer',
-              opacity: uploading ? 0.6 : 1,
-              textAlign: 'left',
-              width: '100%',
-            }}
-          >
-            <span
-              className="gloss-shine"
-              style={{
-                width: '52px',
-                height: '52px',
-                borderRadius: '999px',
-                border: '4px solid black',
-                background: `
-                  linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
-                  #FF8BA7
-                `,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-                boxShadow: '3px 3px 0 0 black',
-              }}
-            >
-              <Camera
-                className="size-6"
-                strokeWidth={2.75}
-                style={{ color: '#000' }}
-              />
-            </span>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: '14px',
-                  fontWeight: 900,
-                  color: '#000',
-                }}
-              >
-                {uploading ? 'uploading...' : 'drop some photos'}
-              </p>
-              <p
-                style={{
-                  margin: '4px 0 0',
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  color: 'rgba(0,0,0,0.55)',
-                }}
-              >
-                tap to pick from your phone · up to 8 MB
-              </p>
-            </div>
-            <Upload
-              className="size-5"
-              strokeWidth={2.75}
-              style={{ color: '#000', flexShrink: 0 }}
-            />
-          </button>
-
+    <div style={{ height: '100%', position: 'relative' }}>
+      <HiddenScroll sidePadding={14} topPadding={4} bottomPadding={24}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {/* Upload card */}
           <div
+            className="border-4 border-black shrink-0"
             style={{
-              borderTop: '3px dashed rgba(0,0,0,0.2)',
-              paddingTop: '10px',
+              borderRadius: '18px',
+              background: `
+                linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%),
+                rgba(255,209,220,0.92)
+              `,
+              boxShadow: `
+                4px 4px 0 0 black,
+                inset 0 1px 0 rgba(255,255,255,0.7)
+              `,
+              padding: '14px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '10px',
             }}
           >
-            <input
-              type="text"
-              value={captionDraft}
-              onChange={(e) => setCaptionDraft(e.target.value)}
-              placeholder="caption for this batch (optional)"
-              maxLength={140}
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
               disabled={uploading}
               style={{
-                width: '100%',
-                border: '2px solid black',
-                borderRadius: '14px',
-                background: '#FFFDF5',
-                color: '#000',
-                fontSize: '13px',
-                padding: '10px 14px',
-                outline: 'none',
-                fontWeight: 700,
-                fontFamily: 'inherit',
-              }}
-            />
-          </div>
-        </div>
-
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          multiple
-          onChange={(e) => handleFiles(e.target.files)}
-          style={{ display: 'none' }}
-        />
-
-        {uploadError && (
-          <div
-            style={{
-              border: '2px solid black',
-              background: '#FFFDF5',
-              color: '#000',
-              fontSize: '13px',
-              fontWeight: 800,
-              borderRadius: '12px',
-              padding: '10px 14px',
-            }}
-          >
-            {uploadError}
-          </div>
-        )}
-
-        {photos.length === 0 ? (
-          <PolaroidGrid
-            list={[]}
-            emptyMessage="no photos yet — drop the first one 📸"
-          />
-        ) : (
-          <>
-            <p
-              style={{
-                margin: '4px 0 0',
-                fontSize: '11px',
-                fontWeight: 900,
-                textTransform: 'uppercase',
-                letterSpacing: '0.12em',
-                color: 'rgba(255,253,245,0.55)',
-                paddingLeft: '8px',
-              }}
-            >
-              📷 the wall
-            </p>
-            <PolaroidGrid list={photos} emptyMessage="no photos yet" />
-          </>
-        )}
-      </div>
-    </div>
-  );
-
-  // =========================
-  // SLIDE 2: RECENT
-  // =========================
-  const recentSlide = (
-    <div
-      style={{
-        height: '100%',
-        overflowY: 'auto',
-        padding: '0 4px 16px',
-        WebkitOverflowScrolling: 'touch',
-      }}
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        {recentPhotos.length === 0 ? (
-          <div
-            className="border-4 border-black text-center"
-            style={{
-              borderRadius: '22px',
-              background: '#FFFDF5',
-              padding: '40px 20px',
-              boxShadow: '6px 6px 0 0 black',
-            }}
-          >
-            <div style={{ fontSize: '36px', marginBottom: '10px' }}>🎞️</div>
-            <p
-              style={{
-                margin: 0,
-                color: '#000',
-                fontWeight: 800,
-                fontSize: '13px',
-              }}
-            >
-              no new photos this week
-            </p>
-          </div>
-        ) : (
-          <>
-            {/* Hero polaroid */}
-            <div
-              className="border-4 border-black shrink-0"
-              style={{
-                borderRadius: '22px',
-                background: `
-                  linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%),
-                  rgba(226,240,217,0.92)
-                `,
-                backdropFilter: 'blur(14px) saturate(160%)',
-                WebkitBackdropFilter: 'blur(14px) saturate(160%)',
-                boxShadow: `
-                  7px 7px 0 0 black,
-                  inset 0 1px 0 rgba(255,255,255,0.75)
-                `,
-                padding: '14px',
                 display: 'flex',
-                flexDirection: 'column',
-                gap: '12px',
+                alignItems: 'center',
+                gap: '14px',
+                padding: '10px',
+                background: 'transparent',
+                border: 'none',
+                cursor: uploading ? 'wait' : 'pointer',
+                opacity: uploading ? 0.6 : 1,
+                textAlign: 'left',
+                width: '100%',
               }}
             >
-              <div
+              <span
+                className="gloss-shine"
                 style={{
+                  width: '48px',
+                  height: '48px',
+                  borderRadius: '999px',
+                  border: '4px solid black',
+                  background: `
+                    linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
+                    #FF8BA7
+                  `,
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '10px',
-                  paddingLeft: '4px',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  boxShadow: '3px 3px 0 0 black',
                 }}
               >
-                <span
-                  className="gloss-shine"
+                <Camera
+                  className="size-5"
+                  strokeWidth={2.75}
+                  style={{ color: '#000' }}
+                />
+              </span>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p
                   style={{
-                    width: '36px',
-                    height: '36px',
-                    borderRadius: '999px',
-                    border: '3px solid black',
-                    background: `
-                      linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
-                      ${colorFor(recentPhotos[0].user_email)}
-                    `,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
+                    margin: 0,
+                    fontSize: '14px',
                     fontWeight: 900,
-                    fontSize: '11px',
                     color: '#000',
-                    flexShrink: 0,
                   }}
                 >
-                  {recentPhotos[0].user_email.slice(0, 2).toUpperCase()}
-                </span>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: '12px',
-                      fontWeight: 900,
-                      color: '#000',
-                    }}
-                  >
-                    ⭐ freshest moment
-                  </p>
-                  <p
-                    style={{
-                      margin: '2px 0 0',
-                      fontSize: '10px',
-                      fontWeight: 800,
-                      color: 'rgba(0,0,0,0.55)',
-                    }}
-                  >
-                    {recentPhotos[0].user_email.split('@')[0]} ·{' '}
-                    {timeAgo(recentPhotos[0].created_at)}
-                  </p>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'center' }}>
-                <div style={{ maxWidth: '360px', width: '100%' }}>
-                  {(() => {
-                    const hp = recentPhotos[0];
-                    return (
-                      <div
-                        className="border-4 border-black"
-                        style={{
-                          background: paperFor(hp.id),
-                          borderRadius: '6px',
-                          boxShadow: '5px 5px 0 0 black',
-                          padding: '10px 10px 0',
-                          transform: 'rotate(-1.5deg)',
-                        }}
-                      >
-                        <button
-                          onClick={() => openLightbox(recentPhotos, 0)}
-                          style={{
-                            width: '100%',
-                            aspectRatio: '1 / 1',
-                            border: '2px solid black',
-                            borderRadius: '3px',
-                            overflow: 'hidden',
-                            padding: 0,
-                            background: '#000',
-                            cursor: 'pointer',
-                            display: 'block',
-                          }}
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={hp.url}
-                            alt=""
-                            style={{
-                              width: '100%',
-                              height: '100%',
-                              objectFit: 'cover',
-                              display: 'block',
-                            }}
-                          />
-                        </button>
-                        <div
-                          style={{
-                            padding: '10px 4px 12px',
-                            minHeight: '42px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}
-                        >
-                          {hp.caption ? (
-                            <p
-                              style={{
-                                margin: 0,
-                                fontSize: '11px',
-                                fontWeight: 700,
-                                color: '#000',
-                                lineHeight: 1.3,
-                                textAlign: 'center',
-                                overflow: 'hidden',
-                                display: '-webkit-box',
-                                WebkitLineClamp: 2,
-                                WebkitBoxOrient: 'vertical',
-                                wordBreak: 'break-word',
-                              }}
-                            >
-                              {hp.caption}
-                            </p>
-                          ) : (
-                            <span
-                              style={{
-                                fontSize: '16px',
-                                color: 'rgba(0,0,0,0.18)',
-                                letterSpacing: '0.15em',
-                              }}
-                            >
-                              ···
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              </div>
-            </div>
-
-            {recentPhotos.length > 1 && (
-              <>
+                  {uploading ? 'uploading...' : 'drop some photos'}
+                </p>
                 <p
                   style={{
                     margin: '4px 0 0',
                     fontSize: '11px',
-                    fontWeight: 900,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.12em',
-                    color: 'rgba(255,253,245,0.55)',
-                    paddingLeft: '8px',
+                    fontWeight: 700,
+                    color: 'rgba(0,0,0,0.55)',
                   }}
                 >
-                  🌱 earlier this week
+                  tap to pick from your phone · up to 8 MB
                 </p>
-                <PolaroidGrid list={recentPhotos.slice(1)} emptyMessage="" />
-              </>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  );
-
-  // =========================
-  // SLIDE 3: BY PERSON
-  // =========================
-  const openPersonPhotos = openPersonEmail
-    ? byPerson.find(([e]) => e === openPersonEmail)?.[1] ?? []
-    : [];
-
-  const byPersonSlide = (
-    <div
-      style={{
-        height: '100%',
-        overflowY: 'auto',
-        padding: '0 4px 16px',
-        WebkitOverflowScrolling: 'touch',
-      }}
-    >
-      {openPersonEmail ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div
-            className="border-4 border-black shrink-0"
-            style={{
-              borderRadius: '22px',
-              background: `
-                linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%),
-                rgba(255,253,245,0.92)
-              `,
-              backdropFilter: 'blur(14px) saturate(160%)',
-              WebkitBackdropFilter: 'blur(14px) saturate(160%)',
-              boxShadow: `
-                6px 6px 0 0 black,
-                inset 0 1px 0 rgba(255,255,255,0.75)
-              `,
-              padding: '12px 14px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '12px',
-            }}
-          >
-            <button
-              onClick={() => setOpenPersonEmail(null)}
-              style={{
-                width: '36px',
-                height: '36px',
-                border: '2px solid black',
-                borderRadius: '999px',
-                background: '#FFD1DC',
-                color: '#000',
-                fontWeight: 900,
-                fontSize: '15px',
-                lineHeight: 1,
-                boxShadow: '2px 2px 0 0 black',
-                cursor: 'pointer',
-                flexShrink: 0,
-              }}
-              aria-label="Back to people"
-            >
-              ‹
+              </div>
+              <Upload
+                className="size-5"
+                strokeWidth={2.75}
+                style={{ color: '#000', flexShrink: 0 }}
+              />
             </button>
-            <span
-              className="gloss-shine"
+
+            <div
               style={{
-                width: '40px',
-                height: '40px',
-                borderRadius: '999px',
-                border: '3px solid black',
-                background: `
-                  linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
-                  ${colorFor(openPersonEmail)}
-                `,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontWeight: 900,
-                fontSize: '12px',
-                color: '#000',
-                flexShrink: 0,
+                borderTop: '3px dashed rgba(0,0,0,0.2)',
+                paddingTop: '10px',
               }}
             >
-              {openPersonEmail.slice(0, 2).toUpperCase()}
-            </span>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <p
+              <input
+                type="text"
+                value={captionDraft}
+                onChange={(e) => setCaptionDraft(e.target.value)}
+                placeholder="caption for this batch (optional)"
+                maxLength={140}
+                disabled={uploading}
                 style={{
-                  margin: 0,
-                  fontSize: '14px',
-                  fontWeight: 900,
+                  width: '100%',
+                  border: '2px solid black',
+                  borderRadius: '14px',
+                  background: '#FFFDF5',
                   color: '#000',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
+                  fontSize: '13px',
+                  padding: '10px 14px',
+                  outline: 'none',
+                  fontWeight: 700,
+                  fontFamily: 'inherit',
                 }}
-              >
-                {openPersonEmail === email
-                  ? `${openPersonEmail.split('@')[0]} (you)`
-                  : openPersonEmail.split('@')[0]}
-              </p>
-              <p
-                style={{
-                  margin: '2px 0 0',
-                  fontSize: '10px',
-                  fontWeight: 800,
-                  color: 'rgba(0,0,0,0.5)',
-                }}
-              >
-                {openPersonPhotos.length} photo
-                {openPersonPhotos.length === 1 ? '' : 's'}
-              </p>
+              />
             </div>
           </div>
 
-          <PolaroidGrid
-            list={openPersonPhotos}
-            emptyMessage="no photos from this person"
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(e) => handleFiles(e.target.files)}
+            style={{ display: 'none' }}
           />
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          {byPerson.length === 0 ? (
+
+          {uploadError && (
             <div
-              className="border-4 border-black text-center"
               style={{
-                borderRadius: '22px',
+                border: '2px solid black',
                 background: '#FFFDF5',
-                padding: '40px 20px',
-                boxShadow: '6px 6px 0 0 black',
+                color: '#000',
+                fontSize: '13px',
+                fontWeight: 800,
+                borderRadius: '12px',
+                padding: '10px 14px',
               }}
             >
-              <div style={{ fontSize: '36px', marginBottom: '10px' }}>👥</div>
-              <p
-                style={{
-                  margin: 0,
-                  color: '#000',
-                  fontWeight: 800,
-                  fontSize: '13px',
-                }}
-              >
-                no photos yet
-              </p>
+              {uploadError}
             </div>
+          )}
+
+          {photos.length === 0 ? (
+            <PolaroidGrid
+              list={[]}
+              emptyMessage="no photos yet — drop the first one 📸"
+            />
           ) : (
             <>
               <p
@@ -1053,169 +694,521 @@ export default function PhotosPage() {
                   textTransform: 'uppercase',
                   letterSpacing: '0.12em',
                   color: 'rgba(255,253,245,0.55)',
-                  paddingLeft: '8px',
+                  paddingLeft: '4px',
                 }}
               >
-                👥 tap a person to see their photos
+                📷 the wall
               </p>
-
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(2, 1fr)',
-                  gap: '20px 16px',
-                  paddingTop: '6px',
-                }}
-              >
-                {byPerson.map(([personEmail, list]) => {
-                  const isMe = personEmail === email;
-                  const prefix = personEmail.split('@')[0];
-                  const initials = prefix.slice(0, 2).toUpperCase();
-                  const avatarBg = colorFor(personEmail);
-                  const latest = list[0];
-                  const tilt = tiltFor(personEmail);
-
-                  return (
-                    <button
-                      key={personEmail}
-                      onClick={() => setOpenPersonEmail(personEmail)}
-                      className="border-4 border-black hover:-translate-y-0.5 active:translate-y-0.5 transition"
-                      style={{
-                        borderRadius: '6px',
-                        background: paperFor(personEmail),
-                        boxShadow: '5px 5px 0 0 black',
-                        padding: '10px 10px 0',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        cursor: 'pointer',
-                        textAlign: 'left',
-                        transform: `rotate(${tilt}deg)`,
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: '100%',
-                          aspectRatio: '1 / 1',
-                          border: '2px solid black',
-                          borderRadius: '3px',
-                          overflow: 'hidden',
-                          background: '#000',
-                        }}
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={latest.url}
-                          alt=""
-                          style={{
-                            width: '100%',
-                            height: '100%',
-                            objectFit: 'cover',
-                            display: 'block',
-                          }}
-                        />
-                      </div>
-
-                      <div
-                        style={{
-                          padding: '10px 4px 12px',
-                          minHeight: '42px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          justifyContent: 'center',
-                        }}
-                      >
-                        <span
-                          className="gloss-shine"
-                          style={{
-                            width: '28px',
-                            height: '28px',
-                            borderRadius: '999px',
-                            border: '2px solid black',
-                            background: `
-                              linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
-                              ${avatarBg}
-                            `,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontWeight: 900,
-                            fontSize: '9px',
-                            color: '#000',
-                            flexShrink: 0,
-                          }}
-                        >
-                          {initials}
-                        </span>
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <p
-                            style={{
-                              margin: 0,
-                              fontSize: '11px',
-                              fontWeight: 900,
-                              color: '#000',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {isMe ? `${prefix} (you)` : prefix}
-                          </p>
-                          <p
-                            style={{
-                              margin: '1px 0 0',
-                              fontSize: '9px',
-                              fontWeight: 800,
-                              color: 'rgba(0,0,0,0.5)',
-                            }}
-                          >
-                            {list.length} photo{list.length === 1 ? '' : 's'}
-                          </p>
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+              <PolaroidGrid list={photos} emptyMessage="no photos yet" />
             </>
           )}
         </div>
-      )}
+      </HiddenScroll>
     </div>
   );
 
-  // =========================
-  // MAIN RENDER
-  // =========================
+  // SLIDE 2: RECENT
+  const recentSlide = (
+    <div style={{ height: '100%', position: 'relative' }}>
+      <HiddenScroll sidePadding={14} topPadding={4} bottomPadding={24}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {recentPhotos.length === 0 ? (
+            <div
+              className="border-4 border-black text-center"
+              style={{
+                borderRadius: '18px',
+                background: '#FFFDF5',
+                padding: '40px 20px',
+                boxShadow: '4px 4px 0 0 black',
+              }}
+            >
+              <div style={{ fontSize: '36px', marginBottom: '10px' }}>🎞️</div>
+              <p
+                style={{
+                  margin: 0,
+                  color: '#000',
+                  fontWeight: 800,
+                  fontSize: '13px',
+                }}
+              >
+                no new photos this week
+              </p>
+            </div>
+          ) : (
+            <>
+              <div
+                className="border-4 border-black shrink-0"
+                style={{
+                  borderRadius: '18px',
+                  background: `
+                    linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%),
+                    rgba(226,240,217,0.92)
+                  `,
+                  boxShadow: `
+                    5px 5px 0 0 black,
+                    inset 0 1px 0 rgba(255,255,255,0.75)
+                  `,
+                  padding: '14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    paddingLeft: '4px',
+                  }}
+                >
+                  <span
+                    className="gloss-shine"
+                    style={{
+                      width: '36px',
+                      height: '36px',
+                      borderRadius: '999px',
+                      border: '3px solid black',
+                      background: `
+                        linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
+                        ${colorFor(recentPhotos[0].user_email)}
+                      `,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 900,
+                      fontSize: '11px',
+                      color: '#000',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {recentPhotos[0].user_email.slice(0, 2).toUpperCase()}
+                  </span>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: '12px',
+                        fontWeight: 900,
+                        color: '#000',
+                      }}
+                    >
+                      ⭐ freshest moment
+                    </p>
+                    <p
+                      style={{
+                        margin: '2px 0 0',
+                        fontSize: '10px',
+                        fontWeight: 800,
+                        color: 'rgba(0,0,0,0.55)',
+                      }}
+                    >
+                      {recentPhotos[0].user_email.split('@')[0]} ·{' '}
+                      {timeAgo(recentPhotos[0].created_at)}
+                    </p>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'center' }}>
+                  <div style={{ maxWidth: '340px', width: '100%' }}>
+                    {(() => {
+                      const hp = recentPhotos[0];
+                      return (
+                        <div
+                          className="border-4 border-black"
+                          style={{
+                            background: paperFor(hp.id),
+                            borderRadius: '6px',
+                            boxShadow: '5px 5px 0 0 black',
+                            padding: '10px 10px 0',
+                            transform: 'rotate(-1.5deg)',
+                          }}
+                        >
+                          <button
+                            onClick={() => openLightbox(recentPhotos, 0)}
+                            style={{
+                              width: '100%',
+                              aspectRatio: '1 / 1',
+                              border: '2px solid black',
+                              borderRadius: '3px',
+                              overflow: 'hidden',
+                              padding: 0,
+                              background: '#000',
+                              cursor: 'pointer',
+                              display: 'block',
+                            }}
+                          >
+                            <SafeImg src={hp.url} />
+                          </button>
+                          <div
+                            style={{
+                              padding: '10px 4px 12px',
+                              minHeight: '42px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            {hp.caption ? (
+                              <p
+                                style={{
+                                  margin: 0,
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  color: '#000',
+                                  lineHeight: 1.3,
+                                  textAlign: 'center',
+                                  overflow: 'hidden',
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: 'vertical',
+                                  wordBreak: 'break-word',
+                                }}
+                              >
+                                {hp.caption}
+                              </p>
+                            ) : (
+                              <span
+                                style={{
+                                  fontSize: '16px',
+                                  color: 'rgba(0,0,0,0.18)',
+                                  letterSpacing: '0.15em',
+                                }}
+                              >
+                                ···
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              </div>
+
+              {recentPhotos.length > 1 && (
+                <>
+                  <p
+                    style={{
+                      margin: '4px 0 0',
+                      fontSize: '11px',
+                      fontWeight: 900,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.12em',
+                      color: 'rgba(255,253,245,0.55)',
+                      paddingLeft: '4px',
+                    }}
+                  >
+                    🌱 earlier this week
+                  </p>
+                  <PolaroidGrid list={recentPhotos.slice(1)} emptyMessage="" />
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </HiddenScroll>
+    </div>
+  );
+
+  // SLIDE 3: BY PERSON
+  const openPersonPhotos = openPersonEmail
+    ? byPerson.find(([e]) => e === openPersonEmail)?.[1] ?? []
+    : [];
+
+  const byPersonSlide = (
+    <div style={{ height: '100%', position: 'relative' }}>
+      <HiddenScroll sidePadding={14} topPadding={4} bottomPadding={24}>
+        {openPersonEmail ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div
+              className="border-4 border-black shrink-0"
+              style={{
+                borderRadius: '18px',
+                background: `
+                  linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%),
+                  rgba(255,253,245,0.92)
+                `,
+                boxShadow: `
+                  4px 4px 0 0 black,
+                  inset 0 1px 0 rgba(255,255,255,0.75)
+                `,
+                padding: '12px 14px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}
+            >
+              <button
+                onClick={() => setOpenPersonEmail(null)}
+                aria-label="Back to people"
+                style={{
+                  width: '36px',
+                  height: '36px',
+                  border: '2px solid black',
+                  borderRadius: '999px',
+                  background: '#FFD1DC',
+                  color: '#000',
+                  fontWeight: 900,
+                  fontSize: '15px',
+                  lineHeight: 1,
+                  boxShadow: '2px 2px 0 0 black',
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                }}
+              >
+                ‹
+              </button>
+              <span
+                className="gloss-shine"
+                style={{
+                  width: '40px',
+                  height: '40px',
+                  borderRadius: '999px',
+                  border: '3px solid black',
+                  background: `
+                    linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
+                    ${colorFor(openPersonEmail)}
+                  `,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 900,
+                  fontSize: '12px',
+                  color: '#000',
+                  flexShrink: 0,
+                }}
+              >
+                {openPersonEmail.slice(0, 2).toUpperCase()}
+              </span>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: '14px',
+                    fontWeight: 900,
+                    color: '#000',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {openPersonEmail === email
+                    ? `${openPersonEmail.split('@')[0]} (you)`
+                    : openPersonEmail.split('@')[0]}
+                </p>
+                <p
+                  style={{
+                    margin: '2px 0 0',
+                    fontSize: '10px',
+                    fontWeight: 800,
+                    color: 'rgba(0,0,0,0.5)',
+                  }}
+                >
+                  {openPersonPhotos.length} photo
+                  {openPersonPhotos.length === 1 ? '' : 's'}
+                </p>
+              </div>
+            </div>
+
+            <PolaroidGrid
+              list={openPersonPhotos}
+              emptyMessage="no photos from this person"
+            />
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {byPerson.length === 0 ? (
+              <div
+                className="border-4 border-black text-center"
+                style={{
+                  borderRadius: '18px',
+                  background: '#FFFDF5',
+                  padding: '40px 20px',
+                  boxShadow: '4px 4px 0 0 black',
+                }}
+              >
+                <div style={{ fontSize: '36px', marginBottom: '10px' }}>👥</div>
+                <p
+                  style={{
+                    margin: 0,
+                    color: '#000',
+                    fontWeight: 800,
+                    fontSize: '13px',
+                  }}
+                >
+                  no photos yet
+                </p>
+              </div>
+            ) : (
+              <>
+                <p
+                  style={{
+                    margin: '4px 0 0',
+                    fontSize: '11px',
+                    fontWeight: 900,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.12em',
+                    color: 'rgba(255,253,245,0.55)',
+                    paddingLeft: '4px',
+                  }}
+                >
+                  👥 tap a person to see their photos
+                </p>
+
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(2, 1fr)',
+                    gap: '20px 14px',
+                    paddingTop: '6px',
+                  }}
+                >
+                  {byPerson.map(([personEmail, list]) => {
+                    const isMe = personEmail === email;
+                    const prefix = personEmail.split('@')[0];
+                    const initials = prefix.slice(0, 2).toUpperCase();
+                    const avatarBg = colorFor(personEmail);
+                    const latest = list[0];
+                    const tilt = tiltFor(personEmail);
+
+                    return (
+                      <button
+                        key={personEmail}
+                        onClick={() => setOpenPersonEmail(personEmail)}
+                        className="border-4 border-black hover:-translate-y-0.5 active:translate-y-0.5 transition"
+                        style={{
+                          borderRadius: '6px',
+                          background: paperFor(personEmail),
+                          boxShadow: '4px 4px 0 0 black',
+                          padding: '10px 10px 0',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          transform: `rotate(${tilt}deg)`,
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: '100%',
+                            aspectRatio: '1 / 1',
+                            border: '2px solid black',
+                            borderRadius: '3px',
+                            overflow: 'hidden',
+                            background: '#000',
+                          }}
+                        >
+                          <SafeImg
+                            src={latest?.url}
+                            fallbackLabel={prefix}
+                          />
+                        </div>
+
+                        <div
+                          style={{
+                            padding: '10px 4px 12px',
+                            minHeight: '42px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <span
+                            className="gloss-shine"
+                            style={{
+                              width: '28px',
+                              height: '28px',
+                              borderRadius: '999px',
+                              border: '2px solid black',
+                              background: `
+                                linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
+                                ${avatarBg}
+                              `,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontWeight: 900,
+                              fontSize: '9px',
+                              color: '#000',
+                              flexShrink: 0,
+                            }}
+                          >
+                            {initials}
+                          </span>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <p
+                              style={{
+                                margin: 0,
+                                fontSize: '11px',
+                                fontWeight: 900,
+                                color: '#000',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {isMe ? `${prefix} (you)` : prefix}
+                            </p>
+                            <p
+                              style={{
+                                margin: '1px 0 0',
+                                fontSize: '9px',
+                                fontWeight: 800,
+                                color: 'rgba(0,0,0,0.5)',
+                              }}
+                            >
+                              {list.length} photo{list.length === 1 ? '' : 's'}
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </HiddenScroll>
+    </div>
+  );
+
   const lightboxPhoto =
     lightboxIndex !== null ? lightboxList[lightboxIndex] : null;
   const lightboxMine = lightboxPhoto?.user_email === email;
 
   return (
-    <div className="fixed inset-0 bg-[#1a0b2e] font-mono flex justify-center overflow-hidden">
+    <div className="fixed inset-0 bg-[#1a0b2e] font-mono flex flex-col overflow-hidden">
       <div
-        className="w-full max-w-3xl h-full flex flex-col p-3 sm:p-6 gap-3 sm:gap-4"
-        style={{ minHeight: 0 }}
+        className="mx-auto flex w-full max-w-3xl flex-1 min-h-0 flex-col gap-2 sm:gap-4"
+        style={{
+          paddingTop: 'max(8px, env(safe-area-inset-top))',
+          paddingBottom: 'max(8px, env(safe-area-inset-bottom))',
+          paddingLeft: 'max(8px, env(safe-area-inset-left))',
+          paddingRight: 'max(8px, env(safe-area-inset-right))',
+        }}
       >
         <div className="flex items-center justify-between shrink-0 gap-2">
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
             <div
-              className="gloss-shine flex size-10 sm:size-12 shrink-0 items-center justify-center rounded-2xl border-4 border-black"
+              className="gloss-shine flex size-10 shrink-0 items-center justify-center rounded-2xl border-4 border-black"
               style={{
                 background: `
                   linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
                   #FFD1DC
                 `,
-                fontSize: '20px',
+                fontSize: '18px',
               }}
             >
               📸
             </div>
             <div className="min-w-0">
-              <h1 className="truncate font-black text-lg sm:text-2xl leading-tight text-white">
+              <h1 className="truncate font-black text-lg leading-tight text-white">
                 photos
               </h1>
-              <p className="text-[10px] sm:text-xs font-bold leading-tight text-white/60">
+              <p className="text-[10px] font-bold leading-tight text-white/60 truncate">
                 {photos.length} photo{photos.length === 1 ? '' : 's'} ·{' '}
                 {recentPhotos.length} this week
               </p>
@@ -1223,11 +1216,15 @@ export default function PhotosPage() {
           </div>
           <Link
             href="/"
-            className="inline-flex items-center border-4 border-black bg-[#E2F0D9] text-black font-black rounded-xl shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition shrink-0"
-            style={{ padding: '8px 16px', gap: '8px' }}
+            className="inline-flex items-center justify-center border-4 border-black bg-[#E2F0D9] text-black font-black rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition shrink-0"
+            style={{
+              padding: '8px 12px',
+              fontSize: '14px',
+              minWidth: '44px',
+              minHeight: '44px',
+            }}
           >
-            <span className="text-base leading-none">←</span>
-            <span className="text-sm leading-none hidden sm:inline">back</span>
+            ←
           </Link>
         </div>
 
@@ -1249,7 +1246,6 @@ export default function PhotosPage() {
         />
       </div>
 
-      {/* LIGHTBOX */}
       {lightboxPhoto && (
         <div
           style={{
@@ -1325,6 +1321,7 @@ export default function PhotosPage() {
               )}
               <button
                 onClick={closeLightbox}
+                aria-label="Close"
                 style={{
                   width: '40px',
                   height: '40px',
@@ -1339,7 +1336,6 @@ export default function PhotosPage() {
                   justifyContent: 'center',
                   flexShrink: 0,
                 }}
-                aria-label="Close"
               >
                 <X className="size-5" strokeWidth={3} />
               </button>
@@ -1358,17 +1354,7 @@ export default function PhotosPage() {
               boxShadow: '8px 8px 0 0 black',
             }}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={lightboxPhoto.url}
-              alt=""
-              style={{
-                maxWidth: '100%',
-                maxHeight: '65vh',
-                display: 'block',
-                objectFit: 'contain',
-              }}
-            />
+            <SafeImg src={lightboxPhoto.url} />
           </div>
 
           <div
@@ -1465,6 +1451,7 @@ export default function PhotosPage() {
                       setLightboxCaptionDraft(lightboxPhoto.caption ?? '');
                       setEditingLightboxCaption(true);
                     }}
+                    aria-label="Edit caption"
                     style={{
                       width: '34px',
                       height: '34px',
@@ -1478,7 +1465,6 @@ export default function PhotosPage() {
                       alignItems: 'center',
                       justifyContent: 'center',
                     }}
-                    aria-label="Edit caption"
                   >
                     <Pencil className="size-4" strokeWidth={2.75} />
                   </button>
@@ -1498,6 +1484,7 @@ export default function PhotosPage() {
             >
               <button
                 onClick={lbPrev}
+                aria-label="Previous"
                 style={{
                   width: '48px',
                   height: '48px',
@@ -1511,7 +1498,6 @@ export default function PhotosPage() {
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
-                aria-label="Previous"
               >
                 <ChevronLeft className="size-6" strokeWidth={3} />
               </button>
@@ -1531,6 +1517,7 @@ export default function PhotosPage() {
               </div>
               <button
                 onClick={lbNext}
+                aria-label="Next"
                 style={{
                   width: '48px',
                   height: '48px',
@@ -1544,7 +1531,6 @@ export default function PhotosPage() {
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
-                aria-label="Next"
               >
                 <ChevronRight className="size-6" strokeWidth={3} />
               </button>
