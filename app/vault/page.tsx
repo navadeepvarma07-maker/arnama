@@ -1,7 +1,6 @@
 'use client';
 import { CutePet } from '@/components/arnama/cute-pet';
-import { Suspense, useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { useProfile, displayLabel, initialsFor } from '@/lib/use-profile';
@@ -78,8 +77,12 @@ function formatTime(iso: string, timeFormat: string = '12h'): string {
 }
 
 function VaultContent() {
-  const searchParams = useSearchParams();
-  const threadParam = searchParams.get('thread');
+  const [threadParam, setThreadParam] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    setThreadParam(params.get('thread'));
+  }, []);
 
   const { profile } = useProfile();
   const timeFormat = profile?.time_format ?? '12h';
@@ -2269,15 +2272,5 @@ function VaultContent() {
 }
 
 export default function VaultPage() {
-  return (
-    <Suspense
-      fallback={
-        <div className="fixed inset-0 bg-[#1a0b2e] flex items-center justify-center text-white font-mono">
-          loading... 🐱
-        </div>
-      }
-    >
-      <VaultContent />
-    </Suspense>
-  );
+  return <VaultContent />;
 }

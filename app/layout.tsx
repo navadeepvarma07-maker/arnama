@@ -1,4 +1,4 @@
-export const dynamic = 'force-dynamic';
+
 import { ThemeProvider } from '@/lib/use-theme';
 import { MusicProvider } from '@/lib/music-context';
 import { GlobalPlayer } from '@/components/arnama/global-player';

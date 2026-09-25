@@ -525,7 +525,7 @@ export function StoryProvider({ children }: { children: ReactNode }) {
       } else if (replyTargetType === 'group' && replyGroupId) {
         window.location.href = `/chat?group=${replyGroupId}`;
       } else {
-        window.location.href = '/vault';
+        window.location.href = `/vault?thread=${target.id}`;
       }
     }
   }

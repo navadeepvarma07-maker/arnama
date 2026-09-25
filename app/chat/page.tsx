@@ -2,6 +2,7 @@
 import { ImagePicker } from '@/components/arnama/image-picker';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { GroupSettings } from '@/components/arnama/group-settings';
 import { supabase } from '@/lib/supabase';
 import { useProfile, displayLabel, initialsFor } from '@/lib/use-profile';
 import {
@@ -46,6 +47,7 @@ type Group = {
   name: string;
   emoji: string;
   color: string;
+  description?: string | null;
   created_by: string;
   created_at: string;
 };
@@ -135,7 +137,7 @@ export default function ChatPage() {
   const [groupInput, setGroupInput] = useState('');
   const [groupSending, setGroupSending] = useState(false);
   const [groupNewBelow, setGroupNewBelow] = useState(0);
-
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupEmoji, setNewGroupEmoji] = useState('💬');
@@ -1155,20 +1157,25 @@ export default function ChatPage() {
             />
             {isGroup && (
               <button
-                onClick={() => leaveGroup(activeRoom.group)}
+                onClick={() => setSettingsOpen(true)}
+                aria-label="Group settings"
                 style={{
-                  padding: '6px 10px',
-                  fontSize: '10px',
-                  fontWeight: 900,
+                  width: '36px',
+                  height: '36px',
                   border: '2px solid black',
                   borderRadius: '999px',
-                  background: '#FFD1DC',
-                  color: '#C2185B',
+                  background: '#E2F0D9',
+                  color: '#000',
                   cursor: 'pointer',
                   flexShrink: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '16px',
+                  boxShadow: '2px 2px 0 0 black',
                 }}
               >
-                leave
+                ⚙️
               </button>
             )}
           </div>
@@ -1716,6 +1723,34 @@ export default function ChatPage() {
             </form>
           </div>
         </div>
+        {settingsOpen && activeRoom.type === 'group' && userId && email && (
+          <GroupSettings
+            group={activeRoom.group}
+            members={groupMembers.filter((m) => m.group_id === activeRoom.group.id)}
+            crewProfiles={crewProfiles}
+            myId={userId}
+            myEmail={email}
+            onClose={() => setSettingsOpen(false)}
+            onGroupUpdated={(g) => {
+              setActiveRoom({ type: 'group', group: g });
+              setGroups((prev) => prev.map((x) => (x.id === g.id ? g : x)));
+            }}
+            onMembersChanged={async () => {
+              const { data } = await supabase
+                .from('chat_group_members')
+                .select('*')
+                .eq('group_id', activeRoom.group.id);
+              setGroupMembers((prev) => [
+                ...prev.filter((m) => m.group_id !== activeRoom.group.id),
+                ...((data ?? []) as GroupMember[]),
+              ]);
+            }}
+            onLeft={() => {
+              setSettingsOpen(false);
+              setActiveRoom(null);
+            }}
+          />
+        )}
 
         {contextMenu && (
           <div
