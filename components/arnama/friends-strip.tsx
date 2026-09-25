@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { displayLabel, initialsFor } from '@/lib/use-profile';
 import { todayStr } from '@/lib/vibe';
+import { useStories } from './story-context';
+import { StoryRing } from './story-ring';
 
 type Profile = {
   id: string;
@@ -23,6 +25,8 @@ type Vibe = {
 const FALLBACK_AVATAR = ['#E2F0D9', '#FFD1DC', '#E6E6FA', '#FFF5BA', '#D4F0F0'];
 
 export function FriendsStrip() {
+  const { hasStory, allViewedByMe, openViewer } = useStories();
+
   const [myId, setMyId] = useState<string | null>(null);
   const [myEmail, setMyEmail] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -49,27 +53,21 @@ export function FriendsStrip() {
       });
   }, []);
 
-  // Load today's vibes for everyone
+  // Load today's vibes
   useEffect(() => {
     const today = todayStr();
-
     async function load() {
       const { data, error } = await supabase
         .from('vibe_checks')
         .select('user_email, emoji, text')
         .eq('date', today);
-
-      if (error) {
-        console.error('vibes load:', error);
-        return;
-      }
+      if (error) return;
       const map: Record<string, Vibe> = {};
       (data ?? []).forEach((v: any) => {
         map[v.user_email] = v;
       });
       setVibes(map);
     }
-
     load();
 
     const ch = supabase
@@ -80,7 +78,6 @@ export function FriendsStrip() {
         () => load()
       )
       .subscribe();
-
     return () => {
       supabase.removeChannel(ch);
     };
@@ -92,7 +89,6 @@ export function FriendsStrip() {
     const channel = supabase.channel('arnama-online', {
       config: { presence: { key: myId } },
     });
-
     channel
       .on('presence', { event: 'sync' }, () => {
         const state = channel.presenceState();
@@ -103,7 +99,6 @@ export function FriendsStrip() {
           await channel.track({ user_id: myId, email: myEmail });
         }
       });
-
     return () => {
       supabase.removeChannel(channel);
     };
@@ -139,16 +134,10 @@ export function FriendsStrip() {
   if (profiles.length === 0) {
     return (
       <div className="rounded-3xl border-4 p-5" style={cardStyle}>
-        <h2
-          className="font-display text-[0.7rem] mb-3"
-          style={{ color: '#000' }}
-        >
+        <h2 className="font-display text-[0.7rem] mb-3" style={{ color: '#000' }}>
           THE CREW
         </h2>
-        <p
-          className="text-sm font-bold"
-          style={{ color: 'rgba(0,0,0,0.5)' }}
-        >
+        <p className="text-sm font-bold" style={{ color: 'rgba(0,0,0,0.5)' }}>
           no members yet
         </p>
       </div>
@@ -173,10 +162,7 @@ export function FriendsStrip() {
         <span
           className="flex items-center gap-1.5 rounded-full border-2 border-black px-2.5 py-1 text-xs font-bold"
           style={{
-            background: `
-              linear-gradient(180deg, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0) 100%),
-              rgba(255, 253, 245, 0.9)
-            `,
+            background: `linear-gradient(180deg, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0) 100%), rgba(255, 253, 245, 0.9)`,
             color: '#000',
           }}
         >
@@ -194,9 +180,10 @@ export function FriendsStrip() {
           const isOnline = onlineIds.includes(p.id);
           const label = displayLabel(p.email, p.display_name);
           const initials = initialsFor(p.email, p.display_name);
-          const avatarBg =
-            p.avatar_color || FALLBACK_AVATAR[idx % FALLBACK_AVATAR.length];
+          const avatarBg = p.avatar_color || FALLBACK_AVATAR[idx % FALLBACK_AVATAR.length];
           const vibe = vibes[p.email];
+          const story = hasStory(p.id);
+          const viewed = allViewedByMe(p.id);
 
           return (
             <li key={p.id}>
@@ -205,59 +192,80 @@ export function FriendsStrip() {
                 className="flex items-center gap-3 hover:-translate-y-0.5 active:translate-y-0.5 transition-transform"
                 style={{ textDecoration: 'none' }}
               >
-                {/* Avatar + vibe sticker + online dot */}
-                <div className="relative" style={{ flexShrink: 0 }}>
-                  <div
-                    className="gloss-shine flex size-11 items-center justify-center rounded-xl border-4 font-display text-[0.6rem]"
+                <div style={{ position: 'relative', flexShrink: 0 }}>
+                  <button
+                    onClick={(e) => {
+                      if (story) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openViewer(p.id);
+                      }
+                    }}
+                    aria-label={story ? 'view story' : ''}
                     style={{
-                      background: `
-                        linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
-                        ${avatarBg}
-                      `,
-                      borderColor: '#000',
-                      color: '#000',
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: story ? 'pointer' : 'default',
+                      padding: 0,
+                      display: 'block',
                     }}
                   >
-                    {initials}
-                  </div>
+                    <StoryRing hasStory={story} seen={viewed} size={48}>
+                      <div
+                        className="gloss-shine flex items-center justify-center font-display"
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          borderRadius: '999px',
+                          border: '3px solid #000',
+                          background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), ${avatarBg}`,
+                          color: '#000',
+                          fontSize: '11px',
+                        }}
+                      >
+                        {initials}
+                      </div>
+                    </StoryRing>
+                  </button>
 
-                  {/* Vibe sticker — top-right of avatar */}
+                  {/* Vibe sticker — only when no story ring */}
                   {vibe && (
                     <span
                       title={vibe.text ?? ''}
                       style={{
                         position: 'absolute',
-                        top: '-8px',
-                        right: '-8px',
-                        width: '22px',
-                        height: '22px',
+                        top: '-6px',
+                        right: '-6px',
+                        width: '20px',
+                        height: '20px',
                         borderRadius: '999px',
                         border: '2px solid black',
                         background: '#FFFDF5',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        fontSize: '12px',
+                        fontSize: '11px',
                         lineHeight: 1,
                         boxShadow: '1.5px 1.5px 0 0 black',
-                        zIndex: 2,
+                        zIndex: 3,
                       }}
                     >
                       {vibe.emoji}
                     </span>
                   )}
 
-                  {/* Online dot — bottom-right */}
+                  {/* Online dot */}
                   <span
                     className="absolute"
                     style={{
-                      bottom: '-4px',
-                      right: '-4px',
+                      bottom: '-2px',
+                      right: '-2px',
                       width: '14px',
                       height: '14px',
                       borderRadius: '999px',
                       border: '2px solid black',
                       backgroundColor: isOnline ? '#7FB89B' : '#D8D0C0',
+                      zIndex: 3,
                     }}
                   />
                 </div>

@@ -1070,7 +1070,7 @@ export default function PhotosPage() {
                     const initials = prefix.slice(0, 2).toUpperCase();
                     const avatarBg = colorFor(personEmail);
                     const latest = list[0];
-                    const tilt = tiltFor(personEmail);
+                    const tilt = 0;
 
                     return (
                       <button

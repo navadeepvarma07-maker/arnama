@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Coins, Star, Zap, LogIn, X, Check } from 'lucide-react';
+import { Coins, Star, Zap, LogIn, X, Check, Plus } from 'lucide-react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { VIBE_EMOJIS, todayStr } from '@/lib/vibe';
+import { useStories } from './story-context';
+import { StoryRing } from './story-ring';
 
 type Vibe = {
   id: string;
@@ -16,13 +18,14 @@ type Vibe = {
 };
 
 export function PlayerCard() {
+  const { myId, hasStory, allViewedByMe, openComposer, openViewer } = useStories();
+
   const [userId, setUserId] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
   const [joinedAt, setJoinedAt] = useState<string | null>(null);
   const [coinCount, setCoinCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  // vibe state
   const [vibe, setVibe] = useState<Vibe | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [selectedEmoji, setSelectedEmoji] = useState<string | null>(null);
@@ -31,7 +34,6 @@ export function PlayerCard() {
 
   const today = todayStr();
 
-  // auth + message count
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       const user = data.user;
@@ -49,8 +51,7 @@ export function PlayerCard() {
           .select('*', { count: 'exact', head: true })
           .eq('user_email', user.email)
           .then(({ count }) => {
-            const n =
-              typeof count === 'number' && Number.isFinite(count) ? count : 0;
+            const n = typeof count === 'number' && Number.isFinite(count) ? count : 0;
             setCoinCount(n);
             setLoading(false);
           });
@@ -60,7 +61,6 @@ export function PlayerCard() {
     });
   }, []);
 
-  // load today's vibe
   useEffect(() => {
     if (!email) return;
     function load() {
@@ -102,16 +102,11 @@ export function PlayerCard() {
     if (!userId || !email || !selectedEmoji) return;
     setSavingVibe(true);
     const cleanText = vibeText.trim().slice(0, 60) || null;
-
     try {
       if (vibe) {
         const { error } = await supabase
           .from('vibe_checks')
-          .update({
-            emoji: selectedEmoji,
-            text: cleanText,
-            updated_at: new Date().toISOString(),
-          })
+          .update({ emoji: selectedEmoji, text: cleanText, updated_at: new Date().toISOString() })
           .eq('id', vibe.id);
         if (error) alert('⚠️ ' + error.message);
       } else {
@@ -132,12 +127,7 @@ export function PlayerCard() {
 
   const cardStyle: React.CSSProperties = {
     background: `
-      linear-gradient(
-        180deg,
-        rgba(255, 255, 255, 0.5) 0%,
-        rgba(255, 255, 255, 0.15) 25%,
-        rgba(255, 255, 255, 0) 55%
-      ),
+      linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0.15) 25%, rgba(255,255,255,0) 55%),
       rgba(230, 230, 250, 0.88)
     `,
     backdropFilter: 'blur(20px) saturate(180%)',
@@ -192,28 +182,94 @@ export function PlayerCard() {
   const xpPercent = Math.max(0, Math.min(100, safeCount));
   const xpDisplay = `${safeCount} / ${xpGoal}`;
 
+  const hasMyStory = myId ? hasStory(myId) : false;
+  const viewedMy = myId ? allViewedByMe(myId) : true;
+
+  function handleAvatarClick() {
+    if (hasMyStory && myId) openViewer(myId);
+    else openComposer();
+  }
+
   return (
     <>
       <div className="rounded-3xl border-4 p-5" style={cardStyle}>
         <div className="flex items-center gap-4">
-          <div
-            className="gloss-shine flex size-16 shrink-0 animate-float items-center justify-center rounded-2xl border-4 font-display text-lg"
-            style={{
-              background: `
-                linear-gradient(
-                  180deg,
-                  rgba(255, 255, 255, 0.8) 0%,
-                  rgba(255, 255, 255, 0.2) 45%,
-                  rgba(255, 255, 255, 0) 100%
-                ),
-                #FFFDF5
-              `,
-              borderColor: '#000',
-              color: '#000',
-            }}
-          >
-            {initials}
-          </div>
+        <div
+  style={{
+    position: 'relative',
+    flexShrink: 0,
+  }}
+>
+  <button
+    onClick={() => {
+      if (hasMyStory && myId) openViewer(myId);
+      else openComposer();
+    }}
+    aria-label={hasMyStory ? 'view your story' : 'add a story'}
+    style={{
+      background: 'transparent',
+      border: 'none',
+      cursor: 'pointer',
+      padding: 0,
+      display: 'block',
+    }}
+  >
+    <StoryRing hasStory={hasMyStory} seen={viewedMy} size={68}>
+      <div
+        className="gloss-shine flex items-center justify-center font-display"
+        style={{
+          width: '100%',
+          height: '100%',
+          borderRadius: '999px',
+          border: '3px solid #000',
+          background: `
+            linear-gradient(
+              180deg,
+              rgba(255, 255, 255, 0.8) 0%,
+              rgba(255, 255, 255, 0.2) 45%,
+              rgba(255, 255, 255, 0) 100%
+            ),
+            #FFFDF5
+          `,
+          color: '#000',
+          fontSize: '16px',
+        }}
+      >
+        {initials}
+      </div>
+    </StoryRing>
+  </button>
+
+  {/* "+" badge — always visible, taps add a new story */}
+  <button
+    onClick={(e) => {
+      e.stopPropagation();
+      openComposer();
+    }}
+    aria-label="add to your story"
+    style={{
+      position: 'absolute',
+      bottom: '-2px',
+      right: '-2px',
+      width: '24px',
+      height: '24px',
+      borderRadius: '999px',
+      border: '2px solid black',
+      background: '#7FB89B',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      boxShadow: '2px 2px 0 0 black',
+      color: '#000',
+      zIndex: 5,
+      cursor: 'pointer',
+      padding: 0,
+    }}
+  >
+    <Plus className="size-3" strokeWidth={3} />
+  </button>
+</div>
+
           <div className="min-w-0 flex-1">
             <p className="truncate font-display text-[0.7rem]" style={{ color: '#000' }}>
               {displayName}
@@ -242,34 +298,12 @@ export function PlayerCard() {
         >
           {vibe ? (
             <>
-              <span style={{ fontSize: '22px', lineHeight: 1, flexShrink: 0 }}>
-                {vibe.emoji}
-              </span>
+              <span style={{ fontSize: '22px', lineHeight: 1, flexShrink: 0 }}>{vibe.emoji}</span>
               <div style={{ minWidth: 0, flex: 1 }}>
-                <p
-                  style={{
-                    margin: 0,
-                    fontSize: '9px',
-                    fontWeight: 900,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.08em',
-                    color: 'rgba(0,0,0,0.5)',
-                  }}
-                >
+                <p style={{ margin: 0, fontSize: '9px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(0,0,0,0.5)' }}>
                   today's vibe
                 </p>
-                <p
-                  style={{
-                    margin: '2px 0 0',
-                    fontSize: '12px',
-                    fontWeight: 800,
-                    color: '#000',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    fontStyle: vibe.text ? 'normal' : 'italic',
-                  }}
-                >
+                <p style={{ margin: '2px 0 0', fontSize: '12px', fontWeight: 800, color: '#000', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: vibe.text ? 'normal' : 'italic' }}>
                   {vibe.text || 'no words needed'}
                 </p>
               </div>
@@ -293,28 +327,12 @@ export function PlayerCard() {
             </>
           ) : (
             <>
-              <span style={{ fontSize: '22px', lineHeight: 1, flexShrink: 0 }}>
-                ✨
-              </span>
+              <span style={{ fontSize: '22px', lineHeight: 1, flexShrink: 0 }}>✨</span>
               <div style={{ minWidth: 0, flex: 1 }}>
-                <p
-                  style={{
-                    margin: 0,
-                    fontSize: '11px',
-                    fontWeight: 800,
-                    color: '#000',
-                  }}
-                >
+                <p style={{ margin: 0, fontSize: '11px', fontWeight: 800, color: '#000' }}>
                   how are you feeling?
                 </p>
-                <p
-                  style={{
-                    margin: '2px 0 0',
-                    fontSize: '9px',
-                    fontWeight: 700,
-                    color: 'rgba(0,0,0,0.5)',
-                  }}
-                >
+                <p style={{ margin: '2px 0 0', fontSize: '9px', fontWeight: 700, color: 'rgba(0,0,0,0.5)' }}>
                   drop your daily vibe
                 </p>
               </div>
@@ -324,10 +342,7 @@ export function PlayerCard() {
                   padding: '5px 12px',
                   border: '2px solid black',
                   borderRadius: '999px',
-                  background: `
-                    linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%),
-                    #FFD1DC
-                  `,
+                  background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #FFD1DC`,
                   color: '#000',
                   fontWeight: 900,
                   fontSize: '10px',
@@ -344,10 +359,7 @@ export function PlayerCard() {
 
         {/* XP */}
         <div className="mt-5">
-          <div
-            className="mb-1.5 flex items-center justify-between text-xs font-bold"
-            style={{ color: '#000' }}
-          >
+          <div className="mb-1.5 flex items-center justify-between text-xs font-bold" style={{ color: '#000' }}>
             <span className="flex items-center gap-1">
               <Zap className="size-3.5" strokeWidth={3} /> XP
             </span>
@@ -357,14 +369,7 @@ export function PlayerCard() {
             className="h-4 w-full rounded-full border-4 border-black overflow-hidden"
             style={{
               position: 'relative',
-              background: `
-                linear-gradient(
-                  180deg,
-                  rgba(0, 0, 0, 0.08) 0%,
-                  rgba(255, 255, 255, 0.4) 100%
-                ),
-                #FFFDF5
-              `,
+              background: `linear-gradient(180deg, rgba(0, 0, 0, 0.08) 0%, rgba(255, 255, 255, 0.4) 100%), #FFFDF5`,
             }}
           >
             <div
@@ -374,14 +379,7 @@ export function PlayerCard() {
                 left: 0,
                 bottom: 0,
                 width: `${xpPercent}%`,
-                background: `
-                  linear-gradient(
-                    180deg,
-                    rgba(255, 255, 255, 0.35) 0%,
-                    rgba(255, 255, 255, 0) 50%
-                  ),
-                  #7FB89B
-                `,
+                background: `linear-gradient(180deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0) 50%), #7FB89B`,
                 borderRadius: xpPercent >= 99 ? '0' : '0 999px 999px 0',
                 transition: 'width 0.5s ease',
               }}
@@ -394,57 +392,31 @@ export function PlayerCard() {
           <div
             className="flex items-center gap-2 rounded-2xl border-4 border-black px-3 py-2.5"
             style={{
-              background: `
-                linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0) 55%),
-                rgba(255, 209, 220, 0.9)
-              `,
+              background: `linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0) 55%), rgba(255, 209, 220, 0.9)`,
               backdropFilter: 'blur(10px) saturate(160%)',
               WebkitBackdropFilter: 'blur(10px) saturate(160%)',
-              boxShadow: `
-                3px 3px 0px 0px rgba(0,0,0,1),
-                inset 0 1px 0 rgba(255, 255, 255, 0.6)
-              `,
+              boxShadow: `3px 3px 0px 0px rgba(0,0,0,1), inset 0 1px 0 rgba(255, 255, 255, 0.6)`,
             }}
           >
             <Coins className="size-5" strokeWidth={2.75} style={{ color: '#000' }} />
             <div className="leading-none">
-              <p className="font-display text-[0.65rem]" style={{ color: '#000' }}>
-                {safeCount}
-              </p>
-              <p
-                className="mt-1 text-[0.7rem] font-bold"
-                style={{ color: 'rgba(0,0,0,0.6)' }}
-              >
-                messages
-              </p>
+              <p className="font-display text-[0.65rem]" style={{ color: '#000' }}>{safeCount}</p>
+              <p className="mt-1 text-[0.7rem] font-bold" style={{ color: 'rgba(0,0,0,0.6)' }}>messages</p>
             </div>
           </div>
           <div
             className="flex items-center gap-2 rounded-2xl border-4 border-black px-3 py-2.5"
             style={{
-              background: `
-                linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0) 55%),
-                rgba(226, 240, 217, 0.9)
-              `,
+              background: `linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0) 55%), rgba(226, 240, 217, 0.9)`,
               backdropFilter: 'blur(10px) saturate(160%)',
               WebkitBackdropFilter: 'blur(10px) saturate(160%)',
-              boxShadow: `
-                3px 3px 0px 0px rgba(0,0,0,1),
-                inset 0 1px 0 rgba(255, 255, 255, 0.6)
-              `,
+              boxShadow: `3px 3px 0px 0px rgba(0,0,0,1), inset 0 1px 0 rgba(255, 255, 255, 0.6)`,
             }}
           >
             <Star className="size-5" strokeWidth={2.75} style={{ color: '#000' }} />
             <div className="leading-none">
-              <p className="font-display text-[0.65rem]" style={{ color: '#000' }}>
-                {joinedLabel}
-              </p>
-              <p
-                className="mt-1 text-[0.7rem] font-bold"
-                style={{ color: 'rgba(0,0,0,0.6)' }}
-              >
-                joined
-              </p>
+              <p className="font-display text-[0.65rem]" style={{ color: '#000' }}>{joinedLabel}</p>
+              <p className="mt-1 text-[0.7rem] font-bold" style={{ color: 'rgba(0,0,0,0.6)' }}>joined</p>
             </div>
           </div>
         </div>
@@ -471,10 +443,7 @@ export function PlayerCard() {
               left: '50%',
               transform: 'translate(-50%,-50%)',
               width: 'min(400px, calc(100vw - 32px))',
-              background: `
-                linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%),
-                rgba(255,253,245,0.98)
-              `,
+              background: `linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%), rgba(255,253,245,0.98)`,
               backdropFilter: 'blur(20px) saturate(180%)',
               WebkitBackdropFilter: 'blur(20px) saturate(180%)',
               border: '4px solid black',
@@ -487,21 +456,8 @@ export function PlayerCard() {
               gap: '14px',
             }}
           >
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-              }}
-            >
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: '13px',
-                  fontWeight: 900,
-                  color: '#000',
-                }}
-              >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <p style={{ margin: 0, fontSize: '13px', fontWeight: 900, color: '#000' }}>
                 {vibe ? 'update your vibe' : 'how are you feeling today?'}
               </p>
               <button
@@ -524,13 +480,7 @@ export function PlayerCard() {
               </button>
             </div>
 
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(4, 1fr)',
-                gap: '8px',
-              }}
-            >
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
               {VIBE_EMOJIS.map((emoji) => {
                 const active = selectedEmoji === emoji;
                 return (
@@ -550,12 +500,9 @@ export function PlayerCard() {
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      boxShadow: active
-                        ? '3px 3px 0 0 black'
-                        : '2px 2px 0 0 black',
+                      boxShadow: active ? '3px 3px 0 0 black' : '2px 2px 0 0 black',
                       padding: 0,
                     }}
-                    aria-label={emoji}
                   >
                     {emoji}
                   </button>
@@ -593,14 +540,12 @@ export function PlayerCard() {
                 padding: '11px',
                 border: '3px solid black',
                 borderRadius: '999px',
-                background:
-                  'linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #E2F0D9',
+                background: 'linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #E2F0D9',
                 color: '#000',
                 fontWeight: 900,
                 fontSize: '12px',
                 boxShadow: '3px 3px 0 0 black',
-                cursor:
-                  !selectedEmoji || savingVibe ? 'not-allowed' : 'pointer',
+                cursor: !selectedEmoji || savingVibe ? 'not-allowed' : 'pointer',
                 opacity: !selectedEmoji || savingVibe ? 0.5 : 1,
               }}
             >
