@@ -426,6 +426,11 @@ h1, h2, h3, p, span, div {
   animation: msg-flash-fade 1.4s ease-out forwards;
   box-shadow: 0 0 20px rgba(255, 139, 167, 0.7);
 }
+/* Voice note recording pulse */
+@keyframes voice-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.15); }
+}
 /* Reply-jump highlight fade */
 @keyframes msg-flash-fade {
   0% {
@@ -615,3 +620,32 @@ body::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
+/* Cute pets */
+@keyframes pet-bob {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50% { transform: translateY(-4px) rotate(2deg); }
+}
+@keyframes pet-peek {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-3px) scale(1.05); }
+}
+@keyframes pet-wiggle {
+  0%, 100% { transform: rotate(-6deg); }
+  50% { transform: rotate(6deg); }
+}
+/* Typing dots animation */
+@keyframes typing-dot {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
+.typing-dot {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin: 0 1px;
+  border-radius: 999px;
+  background: #000;
+  animation: typing-dot 1.2s ease-in-out infinite;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-dot:nth-child(3) { animation-delay: 0.3s; }

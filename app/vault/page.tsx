@@ -1,5 +1,5 @@
 'use client';
-
+import { CutePet } from '@/components/arnama/cute-pet';
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
@@ -10,6 +10,10 @@ import { SwipeCarousel } from '@/components/arnama/swipe-carousel';
 import { HiddenScroll } from '@/components/arnama/hidden-scroll';
 import { playDing } from '@/lib/ding';
 import { parseStoryShare } from '@/components/arnama/story-context';
+import { VoiceRecorder } from '@/components/arnama/voice-recorder';
+import { VoiceBubble } from '@/components/arnama/voice-bubble';
+import { ImagePicker } from '@/components/arnama/image-picker';
+import { formatVoiceContent, parseVoiceContent } from '@/lib/voice';
 import { Lock, Globe, Pencil, X } from 'lucide-react';
 
 type Note = {
@@ -59,7 +63,10 @@ function timeAgo(iso: string): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   if (d < 7) return `${d}d ago`;
-  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  return new Date(iso).toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+  });
 }
 
 function formatTime(iso: string, timeFormat: string = '12h'): string {
@@ -197,99 +204,109 @@ function VaultContent() {
     if (!email) return;
     const ch = supabase
       .channel('shared-notes-live')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vault_notes' }, (payload) => {
-        const n = payload.new as Note;
-        if (n.visibility !== 'shared') return;
-        setSharedNotes((prev) => {
-          if (prev.some((x) => x.id === n.id)) return prev;
-          return [n, ...prev];
-        });
-        if (n.user_id === userId) {
-          setNotes((prev) => {
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'vault_notes' },
+        (payload) => {
+          const n = payload.new as Note;
+          if (n.visibility !== 'shared') return;
+          setSharedNotes((prev) => {
             if (prev.some((x) => x.id === n.id)) return prev;
             return [n, ...prev];
           });
+          if (n.user_id === userId) {
+            setNotes((prev) => {
+              if (prev.some((x) => x.id === n.id)) return prev;
+              return [n, ...prev];
+            });
+          }
+          if (n.user_id !== userId && typeof document !== 'undefined' && document.visibilityState === 'visible') {
+            playDing();
+          }
         }
-        if (n.user_id !== userId && typeof document !== 'undefined' && document.visibilityState === 'visible') {
-          playDing();
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'vault_notes' },
+        (payload) => {
+          const n = payload.new as Note;
+          if (n.visibility !== 'shared') {
+            setSharedNotes((prev) => prev.filter((x) => x.id !== n.id));
+          } else {
+            setSharedNotes((prev) => {
+              const exists = prev.some((x) => x.id === n.id);
+              if (exists) return prev.map((x) => (x.id === n.id ? n : x));
+              return [n, ...prev];
+            });
+          }
+          if (n.user_id === userId) {
+            setNotes((prev) => prev.map((x) => (x.id === n.id ? n : x)));
+          }
         }
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'vault_notes' }, (payload) => {
-        const n = payload.new as Note;
-        if (n.visibility !== 'shared') {
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'vault_notes' },
+        (payload) => {
+          const n = payload.old as { id: string };
           setSharedNotes((prev) => prev.filter((x) => x.id !== n.id));
-        } else {
-          setSharedNotes((prev) => {
-            const exists = prev.some((x) => x.id === n.id);
-            if (exists) return prev.map((x) => (x.id === n.id ? n : x));
-            return [n, ...prev];
-          });
+          if (userId) setNotes((prev) => prev.filter((x) => x.id !== n.id));
         }
-        if (n.user_id === userId) {
-          setNotes((prev) => prev.map((x) => (x.id === n.id ? n : x)));
-        }
-      })
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'vault_notes' }, (payload) => {
-        const n = payload.old as { id: string };
-        setSharedNotes((prev) => prev.filter((x) => x.id !== n.id));
-        if (userId) setNotes((prev) => prev.filter((x) => x.id !== n.id));
-      })
+      )
       .subscribe();
     return () => {
       supabase.removeChannel(ch);
     };
   }, [email, userId]);
 
-  
-    // Open the thread instantly from URL param (don't wait for profile fetch)
-    useEffect(() => {
-      if (!userId || !pendingThreadId) return;
-      setActiveThread({
-        id: pendingThreadId,
-        email: '',
-        display_name: null,
-      });
-      setTabIndex(0);
-      setPendingThreadId(null);
-    }, [userId, pendingThreadId]);
-  
-    // Profiles + unread (runs in background, enriches thread header when ready)
-    useEffect(() => {
-      if (!userId) return;
-      Promise.all([
-        supabase
-          .from('profiles')
-          .select('id, email, display_name')
-          .neq('id', userId)
-          .order('email', { ascending: true }),
-        supabase
-          .from('vault_dms')
-          .select('sender_id')
-          .eq('recipient_id', userId)
-          .is('read_at', null),
-      ]).then(([profilesRes, unreadRes]) => {
-        const loaded = (profilesRes.data ?? []) as Profile[];
-        if (profilesRes.error) console.error(profilesRes.error);
-        else setProfiles(loaded);
-  
-        if (unreadRes.error) console.error(unreadRes.error);
-        else {
-          const counts: Record<string, number> = {};
-          (unreadRes.data ?? []).forEach((row: any) => {
-            counts[row.sender_id] = (counts[row.sender_id] ?? 0) + 1;
-          });
-          setUnreadBySender(counts);
-        }
-      });
-    }, [userId]);
-  
-    // Enrich the active thread when its profile becomes available
-    useEffect(() => {
-      if (!activeThread) return;
-      if (activeThread.email) return; // already has email
-      const found = profiles.find((p) => p.id === activeThread.id);
-      if (found) setActiveThread(found);
-    }, [profiles, activeThread]);
+  // Profiles + unread + deep link (fast open)
+  useEffect(() => {
+    if (!userId || !pendingThreadId) return;
+    setActiveThread({
+      id: pendingThreadId,
+      email: '',
+      display_name: null,
+    });
+    setTabIndex(0);
+    setPendingThreadId(null);
+  }, [userId, pendingThreadId]);
+
+  useEffect(() => {
+    if (!userId) return;
+    Promise.all([
+      supabase
+        .from('profiles')
+        .select('id, email, display_name')
+        .neq('id', userId)
+        .order('email', { ascending: true }),
+      supabase
+        .from('vault_dms')
+        .select('sender_id')
+        .eq('recipient_id', userId)
+        .is('read_at', null),
+    ]).then(([profilesRes, unreadRes]) => {
+      const loaded = (profilesRes.data ?? []) as Profile[];
+      if (profilesRes.error) console.error(profilesRes.error);
+      else setProfiles(loaded);
+
+      if (unreadRes.error) console.error(unreadRes.error);
+      else {
+        const counts: Record<string, number> = {};
+        (unreadRes.data ?? []).forEach((row: any) => {
+          counts[row.sender_id] = (counts[row.sender_id] ?? 0) + 1;
+        });
+        setUnreadBySender(counts);
+      }
+    });
+  }, [userId]);
+
+  // Enrich active thread when profile arrives
+  useEffect(() => {
+    if (!activeThread) return;
+    if (activeThread.email) return;
+    const found = profiles.find((p) => p.id === activeThread.id);
+    if (found) setActiveThread(found);
+  }, [profiles, activeThread]);
 
   // Load DMs
   useEffect(() => {
@@ -338,47 +355,59 @@ function VaultContent() {
     if (!userId) return;
     const channel = supabase
       .channel('vault-dms-live')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vault_dms' }, (payload) => {
-        const m = payload.new as DM;
-        if (m.sender_id !== userId && m.recipient_id !== userId) return;
-        if (m.recipient_id === userId) {
-          if (!activeThread || m.sender_id !== activeThread.id) {
-            setUnreadBySender((prev) => ({
-              ...prev,
-              [m.sender_id]: (prev[m.sender_id] ?? 0) + 1,
-            }));
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'vault_dms' },
+        (payload) => {
+          const m = payload.new as DM;
+          if (m.sender_id !== userId && m.recipient_id !== userId) return;
+          if (m.recipient_id === userId) {
+            if (!activeThread || m.sender_id !== activeThread.id) {
+              setUnreadBySender((prev) => ({
+                ...prev,
+                [m.sender_id]: (prev[m.sender_id] ?? 0) + 1,
+              }));
+            }
+          }
+          if (
+            activeThread &&
+            ((m.sender_id === userId && m.recipient_id === activeThread.id) ||
+              (m.sender_id === activeThread.id && m.recipient_id === userId))
+          ) {
+            setDms((prev) => {
+              if (prev.some((x) => x.id === m.id)) return prev;
+              return [...prev, m];
+            });
+            if (m.sender_id !== userId && typeof document !== 'undefined' && document.visibilityState === 'visible') {
+              playDing();
+            }
+            if (dmAtBottomRef.current) {
+              setTimeout(() => {
+                dmBottomRef.current?.scrollIntoView({
+                  behavior: dmInitialLoadDone.current ? 'smooth' : 'auto',
+                });
+              }, 60);
+            }
           }
         }
-        if (
-          activeThread &&
-          ((m.sender_id === userId && m.recipient_id === activeThread.id) ||
-            (m.sender_id === activeThread.id && m.recipient_id === userId))
-        ) {
-          setDms((prev) => {
-            if (prev.some((x) => x.id === m.id)) return prev;
-            return [...prev, m];
-          });
-          if (m.sender_id !== userId && typeof document !== 'undefined' && document.visibilityState === 'visible') {
-            playDing();
-          }
-          if (dmAtBottomRef.current) {
-            setTimeout(() => {
-              dmBottomRef.current?.scrollIntoView({
-                behavior: dmInitialLoadDone.current ? 'smooth' : 'auto',
-              });
-            }, 60);
-          }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'vault_dms' },
+        (payload) => {
+          const updated = payload.new as DM;
+          if (updated.sender_id !== userId && updated.recipient_id !== userId) return;
+          setDms((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
         }
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'vault_dms' }, (payload) => {
-        const updated = payload.new as DM;
-        if (updated.sender_id !== userId && updated.recipient_id !== userId) return;
-        setDms((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
-      })
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'vault_dms' }, (payload) => {
-        const removed = payload.old as { id: string };
-        setDms((prev) => prev.filter((m) => m.id !== removed.id));
-      })
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'vault_dms' },
+        (payload) => {
+          const removed = payload.old as { id: string };
+          setDms((prev) => prev.filter((m) => m.id !== removed.id));
+        }
+      )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
@@ -406,35 +435,43 @@ function VaultContent() {
 
     const ch = supabase
       .channel('vault-reactions-live')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'reactions' }, (payload) => {
-        const r = payload.new as any;
-        if (r.source !== 'vault') return;
-        const mid = String(r.message_id);
-        setReactions((prev) => {
-          const next = { ...prev };
-          const byEmoji = { ...(next[mid] ?? {}) };
-          const emails = new Set(byEmoji[r.emoji] ?? []);
-          emails.add(r.user_email);
-          byEmoji[r.emoji] = Array.from(emails);
-          next[mid] = byEmoji;
-          return next;
-        });
-      })
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'reactions' }, (payload) => {
-        const r = payload.old as any;
-        if (r.source !== 'vault') return;
-        const mid = String(r.message_id);
-        setReactions((prev) => {
-          const next = { ...prev };
-          const byEmoji = { ...(next[mid] ?? {}) };
-          const emails = (byEmoji[r.emoji] ?? []).filter((e) => e !== r.user_email);
-          if (emails.length === 0) delete byEmoji[r.emoji];
-          else byEmoji[r.emoji] = emails;
-          if (Object.keys(byEmoji).length === 0) delete next[mid];
-          else next[mid] = byEmoji;
-          return next;
-        });
-      })
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'reactions' },
+        (payload) => {
+          const r = payload.new as any;
+          if (r.source !== 'vault') return;
+          const mid = String(r.message_id);
+          setReactions((prev) => {
+            const next = { ...prev };
+            const byEmoji = { ...(next[mid] ?? {}) };
+            const emails = new Set(byEmoji[r.emoji] ?? []);
+            emails.add(r.user_email);
+            byEmoji[r.emoji] = Array.from(emails);
+            next[mid] = byEmoji;
+            return next;
+          });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'reactions' },
+        (payload) => {
+          const r = payload.old as any;
+          if (r.source !== 'vault') return;
+          const mid = String(r.message_id);
+          setReactions((prev) => {
+            const next = { ...prev };
+            const byEmoji = { ...(next[mid] ?? {}) };
+            const emails = (byEmoji[r.emoji] ?? []).filter((e) => e !== r.user_email);
+            if (emails.length === 0) delete byEmoji[r.emoji];
+            else byEmoji[r.emoji] = emails;
+            if (Object.keys(byEmoji).length === 0) delete next[mid];
+            else next[mid] = byEmoji;
+            return next;
+          });
+        }
+      )
       .subscribe();
     return () => {
       supabase.removeChannel(ch);
@@ -575,6 +612,46 @@ function VaultContent() {
       setDms((prev) => prev.map((m) => (m.id === tempId ? (data as DM) : m)));
     }
     setSendingDm(false);
+  }
+
+  async function sendDmContent(content: string) {
+    if (!userId || !email || !activeThread) return;
+    const tempId = `temp-${Date.now()}`;
+    const optimistic: DM = {
+      id: tempId,
+      sender_id: userId,
+      sender_email: email,
+      recipient_id: activeThread.id,
+      recipient_email: activeThread.email,
+      content,
+      created_at: new Date().toISOString(),
+      read_at: null,
+      reply_to_id: replyTo?.id ?? null,
+      edited_at: null,
+    };
+    setDms((prev) => [...prev, optimistic]);
+    dmAtBottomRef.current = true;
+    setReplyTo(null);
+    setTimeout(() => dmBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 60);
+
+    const { data, error } = await supabase
+      .from('vault_dms')
+      .insert({
+        sender_id: userId,
+        sender_email: email,
+        recipient_id: activeThread.id,
+        recipient_email: activeThread.email,
+        content,
+        reply_to_id: optimistic.reply_to_id,
+      })
+      .select()
+      .single();
+    if (error) {
+      setDms((prev) => prev.filter((m) => m.id !== tempId));
+      alert('⚠️ ' + error.message);
+    } else if (data) {
+      setDms((prev) => prev.map((m) => (m.id === tempId ? (data as DM) : m)));
+    }
   }
 
   async function saveEdit(messageId: string) {
@@ -887,6 +964,7 @@ function VaultContent() {
                       const repliedTo = findDmById(m.reply_to_id);
                       const isHighlighted = highlight?.id === m.id;
                       const parsed = parseStoryShare(m.content);
+                      const voice = parseVoiceContent(m.content);
 
                       const msgReactions = reactions[String(m.id)] ?? {};
                       const reactionEntries = Object.entries(msgReactions)
@@ -1081,6 +1159,8 @@ function VaultContent() {
                                     </button>
                                   </div>
                                 </div>
+                              ) : voice ? (
+                                <VoiceBubble url={voice.url} duration={voice.duration} mine={mine} />
                               ) : (
                                 <div>
                                   <p
@@ -1111,7 +1191,7 @@ function VaultContent() {
                                     // eslint-disable-next-line @next/next/no-img-element
                                     <img
                                       src={parsed.imageUrl}
-                                      alt="shared story"
+                                      alt="shared image"
                                       referrerPolicy="no-referrer"
                                       onClick={() => window.open(parsed.imageUrl!, '_blank')}
                                       style={{
@@ -1129,6 +1209,19 @@ function VaultContent() {
                                 </div>
                               )}
                             </div>
+                            {mine && m.read_at && (
+                              <span
+                                style={{
+                                  fontSize: '10px',
+                                  fontWeight: 900,
+                                  color: '#3A7A5E',
+                                  marginTop: '3px',
+                                  paddingRight: '4px',
+                                }}
+                              >
+                                ✓✓ seen
+                              </span>
+                            )}
 
                             {reactionEntries.length > 0 && (
                               <div
@@ -1239,33 +1332,79 @@ function VaultContent() {
               </div>
             )}
 
-            <form
+<form
               onSubmit={sendDm}
               className="border-t-4 border-black bg-[#E6E6FA] flex shrink-0 items-stretch"
               style={{ padding: '10px', gap: '8px' }}
             >
-              <input
-                type="text"
-                value={dmInput}
-                onChange={(e) => setDmInput(e.target.value)}
-                placeholder="type a private message... 🐱"
-                disabled={sendingDm}
-                className="flex-1 min-w-0 border-2 border-black rounded-lg bg-white text-black text-sm focus:outline-none disabled:opacity-50"
-                style={{ padding: '11px 14px' }}
-              />
-              <button
-                type="submit"
-                disabled={sendingDm || !dmInput.trim()}
-                className="inline-flex items-center justify-center border-2 border-black bg-[#E2F0D9] text-black text-xs font-black rounded-lg shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition disabled:opacity-50 disabled:hover:translate-y-0 shrink-0"
-                style={{ padding: '11px 18px', minWidth: '56px' }}
-              >
-                <span className="text-sm leading-none">{sendingDm ? '···' : '▶'}</span>
-              </button>
+              {userId && (
+                <ImagePicker
+                  userId={userId}
+                  disabled={sendingDm}
+                  onSend={async (url) => {
+                    await sendDmContent(url);
+                  }}
+                />
+              )}
+
+<div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+                <CutePet
+                  size={20}
+                  variant="peek"
+                  style={{
+                    position: 'absolute',
+                    top: '-16px',
+                    right: '10px',
+                    zIndex: 2,
+                  }}
+                />
+                <input
+                  type="text"
+                  value={dmInput}
+                  onChange={(e) => setDmInput(e.target.value)}
+                  placeholder="type a private message... 🐱"
+                  disabled={sendingDm}
+                  className="w-full border-2 border-black rounded-lg bg-white text-black text-sm focus:outline-none disabled:opacity-50"
+                  style={{ padding: '11px 14px' }}
+                />
+              </div>
+
+              {dmInput.trim() ? (
+                <div style={{ position: 'relative', flexShrink: 0 }}>
+                <CutePet
+                  size={16}
+                  variant="wiggle"
+                  style={{
+                    position: 'absolute',
+                    top: '-14px',
+                    left: '50%',
+                    marginLeft: '-8px',
+                    zIndex: 2,
+                  }}
+                />
+                <button
+                  type="submit"
+                  disabled={sendingDm}
+                  className="inline-flex items-center justify-center border-2 border-black bg-[#E2F0D9] text-black text-xs font-black rounded-lg shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition disabled:opacity-50"
+                  style={{ padding: '11px 18px', minWidth: '56px' }}
+                >
+                  <span className="text-sm leading-none">{sendingDm ? '···' : '▶'}</span>
+                </button>
+              </div>
+              ) : userId ? (
+                <VoiceRecorder
+                  userId={userId}
+                  disabled={sendingDm}
+                  onSend={async (voiceUrl, duration) => {
+                    const content = formatVoiceContent(voiceUrl, duration);
+                    await sendDmContent(content);
+                  }}
+                />
+              ) : null}
             </form>
           </div>
         </div>
 
-        {/* Context menu */}
         {contextMenu && (
           <div
             onClick={(e) => e.stopPropagation()}
@@ -1350,8 +1489,8 @@ function VaultContent() {
               ↩️ reply
             </button>
 
-            {contextMenu.message.sender_id === userId && (
-              <>
+            {contextMenu.message.sender_id === userId &&
+              !parseVoiceContent(contextMenu.message.content) && (
                 <button
                   onClick={() => {
                     setEditingId(contextMenu.message.id);
@@ -1372,27 +1511,29 @@ function VaultContent() {
                 >
                   ✎ edit
                 </button>
-                <button
-                  onClick={() => {
-                    const id = contextMenu.message.id;
-                    closeContextMenu();
-                    deleteMessage(id);
-                  }}
-                  style={{
-                    padding: '8px 12px',
-                    fontSize: '12px',
-                    color: '#C2185B',
-                    border: 'none',
-                    background: 'transparent',
-                    textAlign: 'left',
-                    fontWeight: 900,
-                    cursor: 'pointer',
-                    borderRadius: '8px',
-                  }}
-                >
-                  ✕ delete
-                </button>
-              </>
+              )}
+
+            {contextMenu.message.sender_id === userId && (
+              <button
+                onClick={() => {
+                  const id = contextMenu.message.id;
+                  closeContextMenu();
+                  deleteMessage(id);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  fontSize: '12px',
+                  color: '#C2185B',
+                  border: 'none',
+                  background: 'transparent',
+                  textAlign: 'left',
+                  fontWeight: 900,
+                  cursor: 'pointer',
+                  borderRadius: '8px',
+                }}
+              >
+                ✕ delete
+              </button>
             )}
 
             <button
@@ -1421,7 +1562,7 @@ function VaultContent() {
   }
 
   // ============================================================
-  // TABBED MODE (messages list / diary / shared)
+  // TABBED MODE
   // ============================================================
 
   const messagesListSlide = (
@@ -1472,10 +1613,7 @@ function VaultContent() {
                   style={{
                     border: '4px solid black',
                     borderRadius: '18px',
-                    background: `
-                      linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%),
-                      #FFFDF5
-                    `,
+                    background: `linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%), #FFFDF5`,
                     padding: '12px 14px',
                     display: 'flex',
                     alignItems: 'center',

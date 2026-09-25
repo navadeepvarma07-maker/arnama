@@ -1,5 +1,5 @@
 'use client';
-
+import { ImagePicker } from '@/components/arnama/image-picker';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
@@ -10,11 +10,15 @@ import {
   isDarkBg,
   MessageBg,
 } from '@/components/message-bg';
+import { CutePet } from '@/components/arnama/cute-pet';
 import { SwipeCarousel } from '@/components/arnama/swipe-carousel';
 import { HiddenScroll } from '@/components/arnama/hidden-scroll';
 import { fireConfetti } from '@/lib/confetti';
 import { playDing } from '@/lib/ding';
 import { parseStoryShare } from '@/components/arnama/story-context';
+import { VoiceRecorder } from '@/components/arnama/voice-recorder';
+import { VoiceBubble } from '@/components/arnama/voice-bubble';
+import { formatVoiceContent, parseVoiceContent } from '@/lib/voice';
 import { Plus, X, Users, Check, Globe } from 'lucide-react';
 
 type Message = {
@@ -167,7 +171,9 @@ export default function ChatPage() {
   const [pulseLoading, setPulseLoading] = useState(true);
 
   const [reactions, setReactions] = useState<ReactionsMap>({});
-
+  const [typingUsers, setTypingUsers] = useState<Record<string, number>>({});
+  const typingChannelRef = useRef<any>(null);
+  const typingLastSentRef = useRef(0);
   // =========================
   // AUTH + heartbeat
   // =========================
@@ -216,7 +222,7 @@ export default function ChatPage() {
   }, []);
 
   // =========================
-  // DEEP LINK — squad chat
+  // DEEP LINK — squad
   // =========================
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -454,7 +460,7 @@ export default function ChatPage() {
     };
   }, [email, activeRoom]);
 
-  // Scroll to bottom on room open
+  // Scroll to bottom when entering a room
   useEffect(() => {
     if (!activeRoom) return;
     isAtBottomRef.current = true;
@@ -482,6 +488,58 @@ export default function ChatPage() {
       clearTimeout(t2);
     };
   }, [activeRoom, messages.length, groupMessages.length]);
+    // =========================
+  // TYPING INDICATOR
+  // =========================
+  useEffect(() => {
+    if (!email || !userId) return;
+    if (!activeRoom) return;
+    const roomKey =
+      activeRoom.type === 'group' ? `g-${activeRoom.group.id}` : 'squad';
+    const ch = supabase.channel(`typing-${roomKey}`);
+    ch.on('broadcast', { event: 'typing' }, (payload: any) => {
+      const data = payload?.payload;
+      if (!data?.email || data.email === email) return;
+      setTypingUsers((prev) => ({ ...prev, [data.email]: Date.now() }));
+    }).subscribe();
+    typingChannelRef.current = ch;
+    setTypingUsers({});
+    return () => {
+      supabase.removeChannel(ch);
+      typingChannelRef.current = null;
+    };
+  }, [email, userId, activeRoom]);
+
+  // Auto-clear stale typing entries
+  useEffect(() => {
+    const i = setInterval(() => {
+      setTypingUsers((prev) => {
+        const now = Date.now();
+        const next: Record<string, number> = {};
+        let changed = false;
+        for (const [k, v] of Object.entries(prev)) {
+          if (now - v < 3000) next[k] = v;
+          else changed = true;
+        }
+        return changed ? next : prev;
+      });
+    }, 1000);
+    return () => clearInterval(i);
+  }, []);
+
+  function notifyTyping() {
+    if (!email) return;
+    const now = Date.now();
+    if (now - typingLastSentRef.current < 1200) return;
+    typingLastSentRef.current = now;
+    try {
+      typingChannelRef.current?.send({
+        type: 'broadcast',
+        event: 'typing',
+        payload: { email },
+      });
+    } catch {}
+  }
 
   // Crew
   useEffect(() => {
@@ -683,6 +741,78 @@ export default function ChatPage() {
       setGroupMessages((prev) => prev.map((m) => (m.id === tempId ? (data as GroupMessage) : m)));
     }
     setGroupSending(false);
+  }
+
+  // Send voice — squad
+  async function sendVoiceSquad(voiceUrl: string, duration: number) {
+    if (!userId || !email) return;
+    const content = formatVoiceContent(voiceUrl, duration);
+    const tempId = -Date.now();
+    const optimistic: Message = {
+      id: tempId,
+      user_email: email,
+      content,
+      created_at: new Date().toISOString(),
+      reply_to_id: replyTo?.id ?? null,
+      edited_at: null,
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    isAtBottomRef.current = true;
+    setReplyTo(null);
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 60);
+
+    const { data, error } = await supabase
+      .from('messages')
+      .insert({ user_email: email, content, reply_to_id: optimistic.reply_to_id })
+      .select()
+      .single();
+    if (error) {
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      alert('⚠️ ' + error.message);
+    } else if (data) {
+      setMessages((prev) => prev.map((m) => (m.id === tempId ? (data as Message) : m)));
+    }
+  }
+
+  // Send voice — group
+  async function sendVoiceGroup(voiceUrl: string, duration: number) {
+    if (!userId || !email) return;
+    if (!activeRoom || activeRoom.type !== 'group') return;
+    const gid = activeRoom.group.id;
+    const content = formatVoiceContent(voiceUrl, duration);
+    const tempId = -Date.now();
+    const optimistic: GroupMessage = {
+      id: tempId,
+      group_id: gid,
+      user_id: userId,
+      user_email: email,
+      content,
+      created_at: new Date().toISOString(),
+      reply_to_id: replyTo?.id ?? null,
+      edited_at: null,
+    };
+    setGroupMessages((prev) => [...prev, optimistic]);
+    isAtBottomRef.current = true;
+    setReplyTo(null);
+    setTimeout(() => groupBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 60);
+
+    const { data, error } = await supabase
+      .from('chat_group_messages')
+      .insert({
+        group_id: gid,
+        user_id: userId,
+        user_email: email,
+        content,
+        reply_to_id: optimistic.reply_to_id,
+      })
+      .select()
+      .single();
+    if (error) {
+      setGroupMessages((prev) => prev.filter((m) => m.id !== tempId));
+      alert('⚠️ ' + error.message);
+    } else if (data) {
+      setGroupMessages((prev) => prev.map((m) => (m.id === tempId ? (data as GroupMessage) : m)));
+    }
   }
 
   // Edit / delete
@@ -1083,6 +1213,7 @@ export default function ChatPage() {
                         .sort((a, b) => b[1].length - a[1].length);
 
                       const parsed = parseStoryShare(m.content);
+                      const voice = parseVoiceContent(m.content);
 
                       return (
                         <div
@@ -1256,6 +1387,8 @@ export default function ChatPage() {
                                     </button>
                                   </div>
                                 </div>
+                              ) : voice ? (
+                                <VoiceBubble url={voice.url} duration={voice.duration} mine={mine} />
                               ) : (
                                 <div>
                                   <p
@@ -1352,6 +1485,52 @@ export default function ChatPage() {
                 ↓ {newBelowVal} new
               </button>
             )}
+                      {(() => {
+              const list = Object.keys(typingUsers);
+              if (list.length === 0) return null;
+              const names = list.map((e) => e.split('@')[0]);
+              const label = names.length === 1
+                ? `${names[0]} is typing`
+                : names.length === 2
+                ? `${names[0]} and ${names[1]} are typing`
+                : `${names.length} people are typing`;
+              return (
+                <div
+                  style={{
+                    borderTop: '4px solid black',
+                    backgroundColor: '#FFFDF5',
+                    padding: '8px 12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    flexShrink: 0,
+                  }}
+                >
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      border: '2px solid black',
+                      borderRadius: '999px',
+                      backgroundColor: '#FFF5BA',
+                      padding: '4px 12px',
+                      fontSize: '11px',
+                      fontWeight: 900,
+                      color: '#000',
+                      boxShadow: '2px 2px 0 0 black',
+                    }}
+                  >
+                    <span>{label}</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                    </span>
+                  </span>
+                </div>
+              );
+            })()}
 
             {replyTo && (
               <div
@@ -1400,28 +1579,140 @@ export default function ChatPage() {
               </div>
             )}
 
-            <form
+<form
               onSubmit={sendFn}
               className="border-t-4 border-black bg-[#E6E6FA] flex shrink-0 items-stretch"
               style={{ padding: '10px', gap: '8px' }}
             >
-              <input
-                type="text"
-                value={inputVal}
-                onChange={(e) => setInputVal(e.target.value)}
-                placeholder="type a message..."
-                disabled={isSending}
-                className="flex-1 min-w-0 border-2 border-black rounded-lg bg-white text-black text-sm focus:outline-none disabled:opacity-50"
-                style={{ padding: '10px 12px' }}
-              />
-              <button
-                type="submit"
-                disabled={isSending || !inputVal.trim()}
-                className="inline-flex items-center justify-center border-2 border-black bg-[#E2F0D9] text-black text-xs font-black rounded-lg shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition disabled:opacity-50 disabled:hover:translate-y-0 shrink-0"
-                style={{ padding: '10px 14px', minWidth: '56px' }}
-              >
-                <span className="text-sm leading-none">{isSending ? '···' : '▶'}</span>
-              </button>
+              {userId && (
+                <ImagePicker
+                  userId={userId}
+                  disabled={isSending}
+                  onSend={async (url) => {
+                    const content = url;
+                    if (isGroup) {
+                      if (!activeRoom || activeRoom.type !== 'group') return;
+                      const gid = activeRoom.group.id;
+                      const tempId = -Date.now();
+                      const optimistic: GroupMessage = {
+                        id: tempId,
+                        group_id: gid,
+                        user_id: userId,
+                        user_email: email!,
+                        content,
+                        created_at: new Date().toISOString(),
+                        reply_to_id: replyTo?.id ?? null,
+                        edited_at: null,
+                      };
+                      setGroupMessages((prev) => [...prev, optimistic]);
+                      isAtBottomRef.current = true;
+                      setReplyTo(null);
+                      setTimeout(() => groupBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 60);
+                      const { data, error } = await supabase
+                        .from('chat_group_messages')
+                        .insert({
+                          group_id: gid,
+                          user_id: userId,
+                          user_email: email!,
+                          content,
+                          reply_to_id: optimistic.reply_to_id,
+                        })
+                        .select()
+                        .single();
+                      if (error) {
+                        setGroupMessages((prev) => prev.filter((x) => x.id !== tempId));
+                        alert('⚠️ ' + error.message);
+                      } else if (data) {
+                        setGroupMessages((prev) => prev.map((x) => (x.id === tempId ? (data as GroupMessage) : x)));
+                      }
+                    } else {
+                      const tempId = -Date.now();
+                      const optimistic: Message = {
+                        id: tempId,
+                        user_email: email!,
+                        content,
+                        created_at: new Date().toISOString(),
+                        reply_to_id: replyTo?.id ?? null,
+                        edited_at: null,
+                      };
+                      setMessages((prev) => [...prev, optimistic]);
+                      isAtBottomRef.current = true;
+                      setReplyTo(null);
+                      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 60);
+                      const { data, error } = await supabase
+                        .from('messages')
+                        .insert({
+                          user_email: email!,
+                          content,
+                          reply_to_id: optimistic.reply_to_id,
+                        })
+                        .select()
+                        .single();
+                      if (error) {
+                        setMessages((prev) => prev.filter((x) => x.id !== tempId));
+                        alert('⚠️ ' + error.message);
+                      } else if (data) {
+                        setMessages((prev) => prev.map((x) => (x.id === tempId ? (data as Message) : x)));
+                      }
+                    }
+                  }}
+                />
+              )}
+
+<div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+                <CutePet
+                  size={20}
+                  variant="peek"
+                  style={{
+                    position: 'absolute',
+                    top: '-16px',
+                    right: '10px',
+                    zIndex: 2,
+                  }}
+                />
+                <input
+                  type="text"
+                  value={inputVal}
+                  onChange={(e) => {
+                    setInputVal(e.target.value);
+                    notifyTyping();
+                  }}
+                  placeholder="type a message..."
+                  disabled={isSending}
+                  className="w-full border-2 border-black rounded-lg bg-white text-black text-sm focus:outline-none disabled:opacity-50"
+                  style={{ padding: '10px 12px' }}
+                />
+              </div>
+
+              {inputVal.trim() ? (
+                <div style={{ position: 'relative', flexShrink: 0 }}>
+                <CutePet
+                  size={16}
+                  variant="wiggle"
+                  style={{
+                    position: 'absolute',
+                    top: '-14px',
+                    left: '50%',
+                    marginLeft: '-8px',
+                    zIndex: 2,
+                  }}
+                />
+                <button
+                  type="submit"
+                  disabled={isSending}
+                  className="inline-flex items-center justify-center border-2 border-black bg-[#E2F0D9] text-black text-xs font-black rounded-lg shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition disabled:opacity-50"
+                  style={{ padding: '10px 14px', minWidth: '52px' }}
+                >
+                  <span className="text-sm leading-none">{isSending ? '···' : '▶'}</span>
+                </button>
+              </div>
+              ) : userId ? (
+                <VoiceRecorder
+                  userId={userId}
+                  disabled={isSending}
+                  onSend={isGroup ? sendVoiceGroup : sendVoiceSquad}
+                />
+              ) : null}
             </form>
           </div>
         </div>
@@ -1507,8 +1798,8 @@ export default function ChatPage() {
             >
               ↩️ reply
             </button>
-            {contextMenu.message.user_email === email && (
-              <>
+            {contextMenu.message.user_email === email &&
+              !parseVoiceContent(contextMenu.message.content) && (
                 <button
                   onClick={() => {
                     setEditingId(contextMenu.message.id);
@@ -1527,26 +1818,27 @@ export default function ChatPage() {
                 >
                   ✎ edit
                 </button>
-                <button
-                  onClick={() => {
-                    const id = contextMenu.message.id;
-                    const isG = contextMenu.isGroup;
-                    closeContextMenu();
-                    deleteMessage(id, isG);
-                  }}
-                  className="text-left font-black rounded-lg hover:bg-[#FFD1DC] transition"
-                  style={{
-                    padding: '8px 12px',
-                    fontSize: '12px',
-                    color: '#C2185B',
-                    border: 'none',
-                    background: 'transparent',
-                    cursor: 'pointer',
-                  }}
-                >
-                  ✕ delete
-                </button>
-              </>
+              )}
+            {contextMenu.message.user_email === email && (
+              <button
+                onClick={() => {
+                  const id = contextMenu.message.id;
+                  const isG = contextMenu.isGroup;
+                  closeContextMenu();
+                  deleteMessage(id, isG);
+                }}
+                className="text-left font-black rounded-lg hover:bg-[#FFD1DC] transition"
+                style={{
+                  padding: '8px 12px',
+                  fontSize: '12px',
+                  color: '#C2185B',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                }}
+              >
+                ✕ delete
+              </button>
             )}
             <button
               onClick={() => {
@@ -1593,7 +1885,6 @@ export default function ChatPage() {
             💬 your rooms
           </p>
 
-          {/* Squad chat — hero */}
           <button
             onClick={() => setActiveRoom({ type: 'squad' })}
             className="hover:-translate-y-0.5 active:translate-y-0.5 transition"
@@ -1708,7 +1999,6 @@ export default function ChatPage() {
             <span style={{ fontSize: '22px', color: '#000', flexShrink: 0 }}>›</span>
           </button>
 
-          {/* New group */}
           <button
             onClick={() => setCreateOpen(true)}
             className="hover:-translate-y-0.5 active:translate-y-0.5 transition"
@@ -1731,7 +2021,6 @@ export default function ChatPage() {
             </span>
           </button>
 
-          {/* Groups list */}
           {groups.length > 0 && (
             <>
               <p
@@ -2217,7 +2506,6 @@ export default function ChatPage() {
         />
       </div>
 
-      {/* CREATE GROUP MODAL */}
       {createOpen && (
         <>
           <div
