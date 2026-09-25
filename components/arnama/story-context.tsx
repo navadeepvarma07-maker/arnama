@@ -46,6 +46,15 @@ type Group = {
   emoji: string;
 };
 
+type Comment = {
+  id: string;
+  story_id: string;
+  user_id: string;
+  user_email: string;
+  content: string;
+  created_at: string;
+};
+
 const STORY_COLORS = ['#FFD1DC', '#E2F0D9', '#E6E6FA', '#FFF5BA', '#D4F0F0'];
 
 function colorFor(s: string): string {
@@ -54,7 +63,6 @@ function colorFor(s: string): string {
   return STORY_COLORS[Math.abs(h) % STORY_COLORS.length];
 }
 
-// Shared helper — detects image URLs inside message content
 export function parseStoryShare(content: string): {
   text: string;
   imageUrl: string | null;
@@ -93,13 +101,16 @@ export function StoryProvider({ children }: { children: ReactNode }) {
   const [viewedIds, setViewedIds] = useState<Set<string>>(new Set());
   const [viewCounts, setViewCounts] = useState<Record<string, number>>({});
   const [likesByStory, setLikesByStory] = useState<Record<string, string[]>>({});
+  const [commentsByStory, setCommentsByStory] = useState<Record<string, Comment[]>>({});
 
   const [viewerUser, setViewerUser] = useState<string | null>(null);
   const [viewerIndex, setViewerIndex] = useState(0);
   const [progress, setProgress] = useState(0);
+  const [paused, setPaused] = useState(false);
+
   const [replyText, setReplyText] = useState('');
   const [sendingReply, setSendingReply] = useState(false);
-  const [replyTargetType, setReplyTargetType] = useState<'dm' | 'group'>('dm');
+  const [replyTargetType, setReplyTargetType] = useState<'dm' | 'group' | 'squad'>('dm');
   const [replyGroupId, setReplyGroupId] = useState<string | null>(null);
   const [replyTargets, setReplyTargets] = useState<Group[]>([]);
 
@@ -107,6 +118,10 @@ export function StoryProvider({ children }: { children: ReactNode }) {
   const [shareTargets, setShareTargets] = useState<Group[]>([]);
   const [sharePersonOpen, setSharePersonOpen] = useState(false);
   const [sharing, setSharing] = useState(false);
+
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [newComment, setNewComment] = useState('');
+  const [postingComment, setPostingComment] = useState(false);
 
   const [toast, setToast] = useState<string | null>(null);
 
@@ -217,7 +232,38 @@ export function StoryProvider({ children }: { children: ReactNode }) {
     };
   }, [myId]);
 
-  // VIEWS I made on others
+  // COMMENTS
+  useEffect(() => {
+    if (!myId) return;
+    function reloadComments() {
+      supabase
+        .from('story_comments')
+        .select('*')
+        .order('created_at', { ascending: true })
+        .then(({ data }) => {
+          const map: Record<string, Comment[]> = {};
+          (data ?? []).forEach((c: any) => {
+            if (!map[c.story_id]) map[c.story_id] = [];
+            map[c.story_id].push(c);
+          });
+          setCommentsByStory(map);
+        });
+    }
+    reloadComments();
+    const ch = supabase
+      .channel('story-comments-live')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'story_comments' },
+        () => reloadComments()
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [myId]);
+
+  // VIEWS
   useEffect(() => {
     if (!myId) return;
     supabase
@@ -229,7 +275,6 @@ export function StoryProvider({ children }: { children: ReactNode }) {
       });
   }, [myId]);
 
-  // VIEW COUNTS on my own stories
   useEffect(() => {
     if (!myId) return;
     supabase
@@ -264,7 +309,6 @@ export function StoryProvider({ children }: { children: ReactNode }) {
     return list.every((s) => viewedIds.has(s.id));
   }
 
-  // REPLY targets — groups shared with story owner
   async function loadReplyTargets(storyUserId: string) {
     if (!myId) return;
     const { data: mine } = await supabase
@@ -291,10 +335,8 @@ export function StoryProvider({ children }: { children: ReactNode }) {
       .select('id, name, emoji')
       .in('id', sharedIds);
     setReplyTargets((groups ?? []) as Group[]);
-    if (groups && groups.length > 0) setReplyGroupId(groups[0].id);
   }
 
-  // VIEWER
   function openViewer(userId: string) {
     if (!hasStory(userId)) {
       if (userId === myId) openComposer();
@@ -303,9 +345,12 @@ export function StoryProvider({ children }: { children: ReactNode }) {
     setViewerUser(userId);
     setViewerIndex(0);
     setProgress(0);
+    setPaused(false);
     setReplyText('');
     setReplyTargetType('dm');
+    setReplyGroupId(null);
     setReplyTargets([]);
+    setCommentsOpen(false);
     loadReplyTargets(userId);
   }
 
@@ -313,7 +358,9 @@ export function StoryProvider({ children }: { children: ReactNode }) {
     setViewerUser(null);
     setViewerIndex(0);
     setProgress(0);
+    setPaused(false);
     setReplyTargets([]);
+    setCommentsOpen(false);
   }
 
   const currentViewerStories = viewerUser ? storiesByUser[viewerUser] ?? [] : [];
@@ -336,12 +383,15 @@ export function StoryProvider({ children }: { children: ReactNode }) {
       });
   }, [currentStory?.id]);
 
-  // AUTO ADVANCE
+  // AUTO ADVANCE — pauses when `paused` is true (long press)
   useEffect(() => {
     if (!currentStory) return;
     if (replyText) return;
-    const start = Date.now();
+    if (paused) return;
+    if (commentsOpen) return;
+
     const DURATION = 5000;
+    const start = Date.now() - (progress / 100) * DURATION;
     const tick = setInterval(() => {
       const p = Math.min(100, ((Date.now() - start) / DURATION) * 100);
       setProgress(p);
@@ -351,7 +401,7 @@ export function StoryProvider({ children }: { children: ReactNode }) {
       }
     }, 60);
     return () => clearInterval(tick);
-  }, [currentStory?.id, replyText]);
+  }, [currentStory?.id, replyText, paused, commentsOpen]);
 
   function nextStory() {
     if (viewerIndex < currentViewerStories.length - 1) {
@@ -399,6 +449,30 @@ export function StoryProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // COMMENT
+  async function addComment() {
+    if (!newComment.trim() || !currentStory || !myId || !myEmail) return;
+    setPostingComment(true);
+    const { error } = await supabase.from('story_comments').insert({
+      story_id: currentStory.id,
+      user_id: myId,
+      user_email: myEmail,
+      content: newComment.trim(),
+    });
+    setPostingComment(false);
+    if (error) {
+      showToast('❌ ' + error.message);
+    } else {
+      setNewComment('');
+    }
+  }
+
+  async function deleteComment(id: string) {
+    if (!confirm('Delete this comment?')) return;
+    const { error } = await supabase.from('story_comments').delete().eq('id', id);
+    if (error) showToast('❌ ' + error.message);
+  }
+
   // REPLY
   async function sendReply() {
     if (!replyText.trim() || !currentStory || !myId || !myEmail) return;
@@ -414,7 +488,13 @@ export function StoryProvider({ children }: { children: ReactNode }) {
     const content = `💬 Replied to your story: ${replyText.trim()}\n${currentStory.media_url ?? ''}`;
     let error: any = null;
 
-    if (replyTargetType === 'group' && replyGroupId) {
+    if (replyTargetType === 'squad') {
+      const r = await supabase.from('messages').insert({
+        user_email: myEmail,
+        content,
+      });
+      error = r.error;
+    } else if (replyTargetType === 'group' && replyGroupId) {
       const r = await supabase.from('chat_group_messages').insert({
         group_id: replyGroupId,
         user_id: myId,
@@ -440,7 +520,9 @@ export function StoryProvider({ children }: { children: ReactNode }) {
     } else {
       setReplyText('');
       closeViewer();
-      if (replyTargetType === 'group' && replyGroupId) {
+      if (replyTargetType === 'squad') {
+        window.location.href = '/chat?squad=1';
+      } else if (replyTargetType === 'group' && replyGroupId) {
         window.location.href = `/chat?group=${replyGroupId}`;
       } else {
         window.location.href = '/vault';
@@ -622,6 +704,7 @@ export function StoryProvider({ children }: { children: ReactNode }) {
 
   const currentLikes = currentStory ? likesByStory[currentStory.id] ?? [] : [];
   const likedByMe = myId ? currentLikes.includes(myId) : false;
+  const currentComments = currentStory ? commentsByStory[currentStory.id] ?? [] : [];
 
   return (
     <StoryContext.Provider
@@ -650,6 +733,7 @@ export function StoryProvider({ children }: { children: ReactNode }) {
             flexDirection: 'column',
           }}
         >
+          {/* Progress bars */}
           <div style={{ display: 'flex', gap: '4px', padding: '10px 10px 0', flexShrink: 0 }}>
             {currentViewerStories.map((_, i) => (
               <div
@@ -673,6 +757,7 @@ export function StoryProvider({ children }: { children: ReactNode }) {
             ))}
           </div>
 
+          {/* Header */}
           <div
             style={{
               display: 'flex',
@@ -723,7 +808,14 @@ export function StoryProvider({ children }: { children: ReactNode }) {
             </button>
           </div>
 
+          {/* Media area — long press to pause */}
           <div
+            onMouseDown={() => setPaused(true)}
+            onMouseUp={() => setPaused(false)}
+            onMouseLeave={() => setPaused(false)}
+            onTouchStart={() => setPaused(true)}
+            onTouchEnd={() => setPaused(false)}
+            onTouchCancel={() => setPaused(false)}
             style={{
               flex: 1,
               minHeight: 0,
@@ -732,6 +824,9 @@ export function StoryProvider({ children }: { children: ReactNode }) {
               alignItems: 'center',
               justifyContent: 'center',
               overflow: 'hidden',
+              userSelect: 'none',
+              WebkitUserSelect: 'none',
+              WebkitTouchCallout: 'none',
             }}
           >
             {currentStory.media_type === 'video' ? (
@@ -740,7 +835,7 @@ export function StoryProvider({ children }: { children: ReactNode }) {
                 autoPlay
                 muted
                 playsInline
-                style={{ maxWidth: '100%', maxHeight: '100%' }}
+                style={{ maxWidth: '100%', maxHeight: '100%', pointerEvents: 'none' }}
               />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
@@ -748,7 +843,13 @@ export function StoryProvider({ children }: { children: ReactNode }) {
                 src={currentStory.media_url ?? ''}
                 alt=""
                 referrerPolicy="no-referrer"
-                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                draggable={false}
+                style={{
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  objectFit: 'contain',
+                  pointerEvents: 'none',
+                }}
               />
             )}
 
@@ -792,6 +893,32 @@ export function StoryProvider({ children }: { children: ReactNode }) {
               </p>
             )}
 
+            {/* Pause indicator */}
+            {paused && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%,-50%)',
+                  width: '60px',
+                  height: '60px',
+                  borderRadius: '999px',
+                  background: 'rgba(0,0,0,0.5)',
+                  border: '2px solid rgba(255,255,255,0.7)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#FFF',
+                  fontSize: '22px',
+                  pointerEvents: 'none',
+                }}
+              >
+                ⏸
+              </div>
+            )}
+
+            {/* Tap zones */}
             <button
               onClick={prevStory}
               aria-label="Previous"
@@ -822,7 +949,7 @@ export function StoryProvider({ children }: { children: ReactNode }) {
             />
           </div>
 
-          {/* LIKE + SHARE */}
+          {/* LIKE + COMMENT + SHARE */}
           <div
             style={{
               display: 'flex',
@@ -853,28 +980,54 @@ export function StoryProvider({ children }: { children: ReactNode }) {
               {currentLikes.length > 0 ? currentLikes.length : ''}
             </button>
 
-            <button
-              onClick={async () => {
-                await loadShareTargets();
-                setSharePersonOpen(false);
-                setShareOpen(true);
-              }}
-              style={{
-                width: '40px',
-                height: '40px',
-                borderRadius: '999px',
-                border: '2px solid #FFF',
-                background: 'rgba(255,255,255,0.15)',
-                color: '#FFF',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-              aria-label="Share story"
-            >
-              <Share2 className="size-4" strokeWidth={2.75} />
-            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={() => {
+                  setCommentsOpen(true);
+                  setPaused(true);
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 14px',
+                  border: '2px solid #FFF',
+                  borderRadius: '999px',
+                  background: 'rgba(255,255,255,0.15)',
+                  color: '#FFF',
+                  cursor: 'pointer',
+                  fontWeight: 900,
+                  fontSize: '13px',
+                }}
+                aria-label="Comments"
+              >
+                💬 {currentComments.length > 0 ? currentComments.length : ''}
+              </button>
+
+              <button
+                onClick={async () => {
+                  await loadShareTargets();
+                  setSharePersonOpen(false);
+                  setShareOpen(true);
+                  setPaused(true);
+                }}
+                style={{
+                  width: '40px',
+                  height: '40px',
+                  borderRadius: '999px',
+                  border: '2px solid #FFF',
+                  background: 'rgba(255,255,255,0.15)',
+                  color: '#FFF',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                aria-label="Share story"
+              >
+                <Share2 className="size-4" strokeWidth={2.75} />
+              </button>
+            </div>
           </div>
 
           {/* ACTION BAR — reply (others) OR views+delete (own) */}
@@ -888,15 +1041,19 @@ export function StoryProvider({ children }: { children: ReactNode }) {
                 flexShrink: 0,
               }}
             >
+              {/* Reply target chips — squad + groups only, no "privately" chip */}
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 <button
-                  onClick={() => setReplyTargetType('dm')}
+                  onClick={() => {
+                    setReplyTargetType('squad');
+                    setReplyGroupId(null);
+                  }}
                   style={{
                     padding: '5px 10px',
                     borderRadius: '999px',
                     border: '2px solid #FFF',
-                    background: replyTargetType === 'dm' ? '#FFF' : 'rgba(255,255,255,0.15)',
-                    color: replyTargetType === 'dm' ? '#000' : '#FFF',
+                    background: replyTargetType === 'squad' ? '#FFF' : 'rgba(255,255,255,0.15)',
+                    color: replyTargetType === 'squad' ? '#000' : '#FFF',
                     fontSize: '10px',
                     fontWeight: 900,
                     cursor: 'pointer',
@@ -905,8 +1062,7 @@ export function StoryProvider({ children }: { children: ReactNode }) {
                     gap: '4px',
                   }}
                 >
-                  <MessageCircle className="size-3" strokeWidth={3} />
-                  reply privately
+                  💬 squad chat
                 </button>
                 {replyTargets.map((g) => (
                   <button
@@ -935,23 +1091,26 @@ export function StoryProvider({ children }: { children: ReactNode }) {
                       gap: '4px',
                     }}
                   >
-                    <Users className="size-3" strokeWidth={3} />
                     {g.emoji} {g.name}
                   </button>
                 ))}
               </div>
 
+              {/* Input — default is DM, overridden by chip selection */}
               <div style={{ display: 'flex', gap: '8px' }}>
                 <input
                   type="text"
                   value={replyText}
                   onChange={(e) => setReplyText(e.target.value)}
-                  placeholder={`reply ${
-                    replyTargetType === 'group'
-                      ? 'to ' +
-                        (replyTargets.find((g) => g.id === replyGroupId)?.name ?? 'group')
-                      : 'privately'
-                  }...`}
+                  placeholder={
+                    replyTargetType === 'squad'
+                      ? 'reply in squad chat...'
+                      : replyTargetType === 'group'
+                      ? `reply in ${
+                          replyTargets.find((g) => g.id === replyGroupId)?.name ?? 'group'
+                        }...`
+                      : 'reply privately...'
+                  }
                   style={{
                     flex: 1,
                     minWidth: 0,
@@ -1041,11 +1200,219 @@ export function StoryProvider({ children }: { children: ReactNode }) {
         </div>
       )}
 
+      {/* COMMENTS SHEET */}
+      {commentsOpen && currentStory && (
+        <>
+          <div
+            onClick={() => {
+              setCommentsOpen(false);
+              setPaused(false);
+            }}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.5)',
+              zIndex: 1200,
+            }}
+          />
+          <div
+            style={{
+              position: 'fixed',
+              left: '50%',
+              bottom: 0,
+              transform: 'translateX(-50%)',
+              width: 'min(500px, 100vw)',
+              maxHeight: '70vh',
+              background: '#FFFDF5',
+              borderTop: '4px solid #000',
+              borderLeft: '4px solid #000',
+              borderRight: '4px solid #000',
+              borderRadius: '22px 22px 0 0',
+              boxShadow: '0 -8px 0 0 rgba(0,0,0,0.2)',
+              zIndex: 1201,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '14px 16px',
+                borderBottom: '3px solid #000',
+                background: '#FFF5BA',
+              }}
+            >
+              <p style={{ margin: 0, fontSize: '13px', fontWeight: 900, color: '#000' }}>
+                💬 comments · {currentComments.length}
+              </p>
+              <button
+                onClick={() => {
+                  setCommentsOpen(false);
+                  setPaused(false);
+                }}
+                style={{
+                  width: '28px',
+                  height: '28px',
+                  border: '2px solid black',
+                  borderRadius: '999px',
+                  background: '#FFD1DC',
+                  color: '#000',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <X className="size-3" strokeWidth={3} />
+              </button>
+            </div>
+
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px' }}>
+              {currentComments.length === 0 ? (
+                <div style={{ padding: '30px 16px', textAlign: 'center' }}>
+                  <p style={{ fontSize: '32px', marginBottom: '8px' }}>💬</p>
+                  <p style={{ margin: 0, fontSize: '12px', fontWeight: 800, color: 'rgba(0,0,0,0.5)' }}>
+                    no comments yet
+                  </p>
+                  <p style={{ margin: '6px 0 0', fontSize: '10px', fontWeight: 700, color: 'rgba(0,0,0,0.4)' }}>
+                    be the first · disappears in 24h 🐾
+                  </p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {currentComments.map((c) => {
+                    const p = profilesMap[c.user_id];
+                    const name = p ? displayLabel(p.email, p.display_name) : c.user_email.split('@')[0];
+                    const av = p?.avatar_color || colorFor(c.user_email);
+                    const initials = p ? initialsFor(p.email, p.display_name) : c.user_email.slice(0, 2).toUpperCase();
+                    const mine = c.user_id === myId;
+                    return (
+                      <div key={c.id} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                        <div
+                          style={{
+                            width: '32px',
+                            height: '32px',
+                            borderRadius: '999px',
+                            border: '2px solid black',
+                            background: av,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontWeight: 900,
+                            fontSize: '10px',
+                            color: '#000',
+                            flexShrink: 0,
+                          }}
+                        >
+                          {initials}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p style={{ margin: 0, fontSize: '11px', fontWeight: 900, color: '#000' }}>
+                            {mine ? 'you' : name}
+                          </p>
+                          <p
+                            style={{
+                              margin: '2px 0 0',
+                              fontSize: '13px',
+                              color: '#000',
+                              lineHeight: 1.4,
+                              wordBreak: 'break-word',
+                            }}
+                          >
+                            {c.content}
+                          </p>
+                        </div>
+                        {mine && (
+                          <button
+                            onClick={() => deleteComment(c.id)}
+                            style={{
+                              width: '24px',
+                              height: '24px',
+                              borderRadius: '999px',
+                              border: '2px solid black',
+                              background: '#FFD1DC',
+                              color: '#000',
+                              fontWeight: 900,
+                              fontSize: '10px',
+                              cursor: 'pointer',
+                              flexShrink: 0,
+                            }}
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {currentStory.user_id !== myId && (
+              <div
+                style={{
+                  padding: '10px 14px 14px',
+                  borderTop: '3px solid #000',
+                  background: '#E6E6FA',
+                  display: 'flex',
+                  gap: '8px',
+                  flexShrink: 0,
+                }}
+              >
+                <input
+                  type="text"
+                  value={newComment}
+                  onChange={(e) => setNewComment(e.target.value)}
+                  placeholder="add a comment..."
+                  maxLength={120}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    border: '2px solid black',
+                    borderRadius: '999px',
+                    background: '#FFFDF5',
+                    color: '#000',
+                    fontSize: '13px',
+                    padding: '10px 14px',
+                    outline: 'none',
+                    fontWeight: 700,
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') addComment();
+                  }}
+                />
+                <button
+                  onClick={addComment}
+                  disabled={!newComment.trim() || postingComment}
+                  style={{
+                    border: '2px solid black',
+                    borderRadius: '999px',
+                    background: '#E2F0D9',
+                    color: '#000',
+                    padding: '0 16px',
+                    cursor: newComment.trim() ? 'pointer' : 'not-allowed',
+                    opacity: newComment.trim() ? 1 : 0.5,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Send className="size-4" strokeWidth={2.75} />
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
       {/* SHARE SHEET */}
       {shareOpen && currentStory && (
         <>
           <div
-            onClick={() => !sharing && setShareOpen(false)}
+            onClick={() => !sharing && (setShareOpen(false), setPaused(false))}
             style={{
               position: 'fixed',
               inset: 0,
@@ -1082,7 +1449,10 @@ export function StoryProvider({ children }: { children: ReactNode }) {
                 📤 share story
               </p>
               <button
-                onClick={() => setShareOpen(false)}
+                onClick={() => {
+                  setShareOpen(false);
+                  setPaused(false);
+                }}
                 disabled={sharing}
                 style={{
                   width: '28px',

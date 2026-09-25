@@ -1,5 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { ThemeProvider } from '@/lib/use-theme';
+import { MusicProvider } from '@/lib/music-context';
+import { GlobalPlayer } from '@/components/arnama/global-player';
 import { SWRegistrar } from '@/components/sw-registrar';
 import { Analytics } from '@vercel/analytics/next';
 import type { Metadata, Viewport } from 'next';
@@ -70,7 +72,10 @@ export default function RootLayout({
       <body className="font-sans antialiased">
         <SWRegistrar />
         <ThemeProvider>
-          {children}
+          <MusicProvider>
+            {children}
+            <GlobalPlayer />
+          </MusicProvider>
         </ThemeProvider>
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>

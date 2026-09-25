@@ -240,44 +240,56 @@ function VaultContent() {
     };
   }, [email, userId]);
 
-  // Profiles + unread + deep link
-  useEffect(() => {
-    if (!userId) return;
-    Promise.all([
-      supabase
-        .from('profiles')
-        .select('id, email, display_name')
-        .neq('id', userId)
-        .order('email', { ascending: true }),
-      supabase
-        .from('vault_dms')
-        .select('sender_id')
-        .eq('recipient_id', userId)
-        .is('read_at', null),
-    ]).then(([profilesRes, unreadRes]) => {
-      const loaded = (profilesRes.data ?? []) as Profile[];
-      if (profilesRes.error) console.error(profilesRes.error);
-      else setProfiles(loaded);
-
-      if (pendingThreadId && loaded.length > 0) {
-        const found = loaded.find((p) => p.id === pendingThreadId);
-        if (found) {
-          setActiveThread(found);
-          setTabIndex(0);
+  
+    // Open the thread instantly from URL param (don't wait for profile fetch)
+    useEffect(() => {
+      if (!userId || !pendingThreadId) return;
+      setActiveThread({
+        id: pendingThreadId,
+        email: '',
+        display_name: null,
+      });
+      setTabIndex(0);
+      setPendingThreadId(null);
+    }, [userId, pendingThreadId]);
+  
+    // Profiles + unread (runs in background, enriches thread header when ready)
+    useEffect(() => {
+      if (!userId) return;
+      Promise.all([
+        supabase
+          .from('profiles')
+          .select('id, email, display_name')
+          .neq('id', userId)
+          .order('email', { ascending: true }),
+        supabase
+          .from('vault_dms')
+          .select('sender_id')
+          .eq('recipient_id', userId)
+          .is('read_at', null),
+      ]).then(([profilesRes, unreadRes]) => {
+        const loaded = (profilesRes.data ?? []) as Profile[];
+        if (profilesRes.error) console.error(profilesRes.error);
+        else setProfiles(loaded);
+  
+        if (unreadRes.error) console.error(unreadRes.error);
+        else {
+          const counts: Record<string, number> = {};
+          (unreadRes.data ?? []).forEach((row: any) => {
+            counts[row.sender_id] = (counts[row.sender_id] ?? 0) + 1;
+          });
+          setUnreadBySender(counts);
         }
-        setPendingThreadId(null);
-      }
-
-      if (unreadRes.error) console.error(unreadRes.error);
-      else {
-        const counts: Record<string, number> = {};
-        (unreadRes.data ?? []).forEach((row: any) => {
-          counts[row.sender_id] = (counts[row.sender_id] ?? 0) + 1;
-        });
-        setUnreadBySender(counts);
-      }
-    });
-  }, [userId, pendingThreadId]);
+      });
+    }, [userId]);
+  
+    // Enrich the active thread when its profile becomes available
+    useEffect(() => {
+      if (!activeThread) return;
+      if (activeThread.email) return; // already has email
+      const found = profiles.find((p) => p.id === activeThread.id);
+      if (found) setActiveThread(found);
+    }, [profiles, activeThread]);
 
   // Load DMs
   useEffect(() => {

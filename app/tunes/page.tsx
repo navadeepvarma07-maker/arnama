@@ -4,14 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { useProfile, displayLabel } from '@/lib/use-profile';
+import { useMusic } from '@/lib/music-context';
 import { SwipeCarousel } from '@/components/arnama/swipe-carousel';
-
-declare global {
-  interface Window {
-    YT: any;
-    onYouTubeIframeAPIReady?: () => void;
-  }
-}
 
 type Tune = {
   id: string;
@@ -56,11 +50,18 @@ function expectedPosition(room: RoomState | null): number {
   return (room.position_seconds ?? 0) + elapsed;
 }
 
+function ytThumb(videoId: string | null): string {
+  if (!videoId) return '';
+  return `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+}
+
 export default function TunesPage() {
   const { profile } = useProfile();
   const displayName = profile
     ? displayLabel(profile.email, profile.display_name)
     : '';
+
+  const music = useMusic();
 
   const [email, setEmail] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
@@ -77,19 +78,13 @@ export default function TunesPage() {
   const [tabIndex, setTabIndex] = useState(0);
   const roomMode = tabIndex === 0;
 
-  // Solo mode state
   const [localVideoId, setLocalVideoId] = useState<string | null>(null);
   const [localTitle, setLocalTitle] = useState<string | null>(null);
   const localPositionRef = useRef(0);
 
-  const [ytReady, setYtReady] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [position, setPosition] = useState(0);
-  const [duration, setDuration] = useState(0);
-
-  const playerRef = useRef<any>(null);
-  const suppressSyncRef = useRef(false);
-  const roomRef = useRef<RoomState | null>(null);
+  const roomDockRef = useRef<HTMLDivElement>(null);
+  const soloDockRef = useRef<HTMLDivElement>(null);
+  const suppressRoomSyncRef = useRef(false);
 
   const roomVideoId = room?.current_video_id ?? null;
   const roomTune = room?.current_tune_id
@@ -140,10 +135,6 @@ export default function TunesPage() {
       });
   }, [email]);
 
-  useEffect(() => {
-    roomRef.current = room;
-  }, [room]);
-
   // ROOM REALTIME
   useEffect(() => {
     if (!email) return;
@@ -162,156 +153,109 @@ export default function TunesPage() {
     };
   }, [email]);
 
-  // YT IFRAME API
+  // Reposition the global player over the active dock every frame
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (window.YT && window.YT.Player) {
-      setYtReady(true);
-      return;
+    let raf: number;
+    function tick() {
+      const el = roomMode ? roomDockRef.current : soloDockRef.current;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        music.movePlayerTo({
+          top: r.top,
+          left: r.left,
+          width: r.width,
+          height: r.height,
+        });
+      } else {
+        // No active dock → hide the iframe so it doesn't leak into the other tab
+        music.movePlayerTo(null);
+      }
+      raf = requestAnimationFrame(tick);
     }
-    if (!document.querySelector('script[src*="iframe_api"]')) {
-      const s = document.createElement('script');
-      s.src = 'https://www.youtube.com/iframe_api';
-      document.body.appendChild(s);
-    }
-    const prev = window.onYouTubeIframeAPIReady;
-    window.onYouTubeIframeAPIReady = () => {
-      prev?.();
-      setYtReady(true);
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomMode]);
+
+  // When leaving /tunes entirely, undock
+  useEffect(() => {
+    return () => {
+      music.movePlayerTo(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // CREATE / RECREATE PLAYER
+  // Tell the player what to load when active video changes
   useEffect(() => {
-    if (!ytReady) return;
-
-    if (playerRef.current) {
-      try {
-        playerRef.current.destroy();
-      } catch {}
-      playerRef.current = null;
-    }
-
-    const activeVideoId = roomMode ? roomVideoId : localVideoId;
-    if (!activeVideoId) return;
-
-    const containerId = roomMode ? 'yt-player-room' : 'yt-player-solo';
-    const container = document.getElementById(containerId);
-    if (!container) {
-      const retry = setTimeout(() => {
-        const c2 = document.getElementById(containerId);
-        if (c2) createPlayer(activeVideoId);
-      }, 80);
-      return () => clearTimeout(retry);
-    }
-
-    createPlayer(activeVideoId);
-
-    function createPlayer(videoId: string) {
-      const r = roomRef.current;
-
-      let initialPos = 0;
-      let shouldAutoplay = false;
-
-      if (roomMode) {
-        initialPos = expectedPosition(r);
-        shouldAutoplay = !!r?.is_playing;
-      } else {
-        initialPos = localPositionRef.current;
-        shouldAutoplay = false;
-      }
-
-      playerRef.current = new window.YT.Player(containerId, {
-        videoId,
-        playerVars: {
-          controls: 0,
-          disablekb: 1,
-          modestbranding: 1,
-          rel: 0,
-          playsinline: 1,
-          iv_load_policy: 3,
-          enablejsapi: 1,
-          origin:
-            typeof window !== 'undefined' ? window.location.origin : '',
-        },
-        events: {
-          onReady: (event: any) => {
-            setDuration(event.target.getDuration() || 0);
-            if (initialPos > 0) {
-              try {
-                event.target.seekTo(initialPos, true);
-              } catch {}
+    if (roomMode) {
+      if (!roomVideoId) return;
+      const meta = roomTune
+        ? {
+            title: roomTune.title,
+            artist: `DJ: ${djName ?? 'nobody'}`,
+            artwork: ytThumb(roomVideoId),
+          }
+        : {
+            title: 'shared tunes',
+            artist: 'listening room',
+            artwork: ytThumb(roomVideoId),
+          };
+      music.setTrack(roomVideoId, {
+        position: expectedPosition(room),
+        autoplay: room?.is_playing ?? false,
+        meta,
+      });
+    } else {
+      if (!localVideoId) return;
+      music.setTrack(localVideoId, {
+        position: localPositionRef.current,
+        autoplay: false,
+        meta: localTitle
+          ? {
+              title: localTitle,
+              artist: 'solo mode',
+              artwork: ytThumb(localVideoId),
             }
-            if (shouldAutoplay) {
-              try {
-                event.target.playVideo();
-              } catch {}
-            }
-          },
-          onStateChange: (event: any) => {
-            const s = event.data;
-            if (s === 1) setIsPlaying(true);
-            else if (s === 2) setIsPlaying(false);
-          },
-        },
+          : null,
       });
     }
-  }, [ytReady, roomMode, roomVideoId, localVideoId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomMode, roomVideoId, localVideoId]);
 
-  // SYNC ENGINE (room mode only, skip our own writes)
+  // Sync room → player
   useEffect(() => {
     if (!roomMode) return;
-    if (!playerRef.current || !room || !ytReady) return;
-    if (!playerRef.current.getCurrentTime) return;
-
-    if (suppressSyncRef.current) {
-      suppressSyncRef.current = false;
+    if (!room) return;
+    if (!room.current_video_id) return;
+    if (room.current_video_id !== music.currentVideoId) return;
+    if (suppressRoomSyncRef.current) {
+      suppressRoomSyncRef.current = false;
       return;
     }
 
     const expected = expectedPosition(room);
     let current = 0;
     try {
-      current = playerRef.current.getCurrentTime();
-    } catch {
-      return;
-    }
+      current = music.playerRef.current?.getCurrentTime?.() ?? 0;
+    } catch {}
 
     if (Math.abs(current - expected) > 2) {
-      try {
-        playerRef.current.seekTo(expected, true);
-        setPosition(expected);
-      } catch {}
+      music.seek(expected);
     }
 
-    try {
-      const state = playerRef.current.getPlayerState();
-      if (room.is_playing && state !== 1) {
-        playerRef.current.playVideo();
-      } else if (!room.is_playing && state === 1) {
-        playerRef.current.pauseVideo();
-      }
-    } catch {}
-  }, [room, ytReady, roomMode]);
+    if (room.is_playing) music.play();
+    else music.pause();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.is_playing, room?.position_seconds, room?.started_at, room?.current_video_id, roomMode]);
 
-  // POLL POSITION
+  // Save solo position
   useEffect(() => {
-    if (!isPlaying) return;
-    const i = setInterval(() => {
-      try {
-        if (playerRef.current?.getCurrentTime) {
-          const pos = playerRef.current.getCurrentTime();
-          setPosition(pos);
-          if (!roomMode) localPositionRef.current = pos;
-        }
-        if (playerRef.current?.getDuration) {
-          const d = playerRef.current.getDuration();
-          if (d && d > 0) setDuration(d);
-        }
-      } catch {}
-    }, 500);
-    return () => clearInterval(i);
-  }, [isPlaying, roomMode]);
+    if (roomMode) return;
+    if (!music.isPlaying) return;
+    localPositionRef.current = music.position;
+  }, [music.position, roomMode, music.isPlaying]);
 
   // PRESENCE
   useEffect(() => {
@@ -331,24 +275,9 @@ export default function TunesPage() {
     };
   }, [email, userId]);
 
-  // HELPERS
-  function getPlayerState(): number {
-    try {
-      return playerRef.current?.getPlayerState?.() ?? -1;
-    } catch {
-      return -1;
-    }
-  }
-
-  function actuallyPlaying(): boolean {
-    const st = getPlayerState();
-    return st === 1;
-  }
-
-  // ACTIONS
   async function updateRoom(updates: Partial<RoomState>) {
     if (!userId || !email) return;
-    suppressSyncRef.current = true;
+    suppressRoomSyncRef.current = true;
     const { error } = await supabase
       .from('listening_rooms')
       .update({
@@ -359,7 +288,7 @@ export default function TunesPage() {
       .eq('id', 'main');
     if (error) {
       console.error(error);
-      suppressSyncRef.current = false;
+      suppressRoomSyncRef.current = false;
     }
   }
 
@@ -382,7 +311,6 @@ export default function TunesPage() {
 
     if (roomMode) {
       if (!isDJ) {
-        // Auto-claim DJ when nobody is on the wheel, or just nudge them
         if (!room?.dj_user_id) {
           await updateRoom({
             current_tune_id: tune.id,
@@ -393,9 +321,9 @@ export default function TunesPage() {
             dj_user_id: userId,
             dj_email: email,
           });
-        } else {
-          alert('✋ take the wheel first to control the room');
+          return;
         }
+        alert('✋ take the wheel first to control the room');
         return;
       }
       await updateRoom({
@@ -412,28 +340,18 @@ export default function TunesPage() {
     }
   }
 
-  // 🎯 THE FIX — act on local player FIRST, then broadcast
   function togglePlay() {
-    if (!playerRef.current) return;
     if (roomMode && !isDJ) return;
 
-    const currentlyPlaying = actuallyPlaying();
-    const next = !currentlyPlaying;
+    const next = !music.isPlaying;
+    if (next) music.play();
+    else music.pause();
 
-    // 1. Act on the local player IMMEDIATELY — no waiting
-    try {
-      if (next) playerRef.current.playVideo();
-      else playerRef.current.pauseVideo();
-    } catch {}
-    setIsPlaying(next); // optimistic UI update
-
-    // 2. Grab the current position
     let pos = 0;
     try {
-      pos = playerRef.current.getCurrentTime() || 0;
+      pos = music.playerRef.current?.getCurrentTime?.() ?? 0;
     } catch {}
 
-    // 3. Broadcast to everyone else
     if (roomMode) {
       updateRoom({
         is_playing: next,
@@ -446,21 +364,14 @@ export default function TunesPage() {
   }
 
   function seekTo(sec: number) {
-    if (!playerRef.current) return;
     if (roomMode && !isDJ) return;
 
-    try {
-      playerRef.current.seekTo(sec, true);
-    } catch {}
-    setPosition(sec);
+    music.seek(sec);
 
     if (roomMode) {
       updateRoom({
         position_seconds: sec,
-        started_at:
-          room?.is_playing || actuallyPlaying()
-            ? new Date().toISOString()
-            : null,
+        started_at: room?.is_playing ? new Date().toISOString() : null,
       });
     } else {
       localPositionRef.current = sec;
@@ -507,15 +418,14 @@ export default function TunesPage() {
     );
   }
 
+  const { isPlaying, position, duration } = music;
   const progressPercent = duration > 0 ? (position / duration) * 100 : 0;
 
-  // RENDER SLIDE
   function renderSlide(mode: 'room' | 'solo') {
     const modeIsRoom = mode === 'room';
     const isActive =
       (modeIsRoom && tabIndex === 0) || (!modeIsRoom && tabIndex === 1);
 
-    const activeVideoId = modeIsRoom ? roomVideoId : localVideoId;
     const activeTune = modeIsRoom
       ? roomTune
       : localTitle
@@ -529,6 +439,7 @@ export default function TunesPage() {
       : null;
 
     const controlsEnabled = modeIsRoom ? isDJ : true;
+    const dockRef = modeIsRoom ? roomDockRef : soloDockRef;
 
     return (
       <div
@@ -542,7 +453,6 @@ export default function TunesPage() {
           WebkitOverflowScrolling: 'touch',
         }}
       >
-        {/* NOW PLAYING CARD */}
         <div
           className="border-4 border-black rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] shrink-0"
           style={{
@@ -618,9 +528,7 @@ export default function TunesPage() {
                       ? `${
                           activeTune.user_email === email
                             ? 'added by you'
-                            : `added by ${
-                                activeTune.user_email.split('@')[0]
-                              }`
+                            : `added by ${activeTune.user_email.split('@')[0]}`
                         }${
                           djName
                             ? ` · DJ: ${
@@ -654,7 +562,6 @@ export default function TunesPage() {
                       fontSize: '10px',
                       boxShadow: '2px 2px 0 0 black',
                     }}
-                    title="tap to step down as DJ"
                   >
                     🎧 you're DJ · tap to step down
                   </button>
@@ -673,8 +580,21 @@ export default function TunesPage() {
                 )}
               </div>
 
-              {/* PLAYER — only rendered in the active slide */}
-              {isActive && (
+              {/* DOCK placeholder — the actual iframe is positioned over this */}
+              {isActive ? (
+                <div
+                  ref={dockRef}
+                  style={{
+                    border: '3px solid black',
+                    borderRadius: '12px',
+                    overflow: 'hidden',
+                    backgroundColor: '#000',
+                    aspectRatio: '16 / 9',
+                    width: '100%',
+                    position: 'relative',
+                  }}
+                />
+              ) : (
                 <div
                   style={{
                     border: '3px solid black',
@@ -683,18 +603,20 @@ export default function TunesPage() {
                     backgroundColor: '#000',
                     aspectRatio: '16 / 9',
                     width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#FFF',
+                    fontWeight: 900,
+                    fontSize: '11px',
+                    opacity: 0.6,
                   }}
                 >
-                  <div
-                    id={modeIsRoom ? 'yt-player-room' : 'yt-player-solo'}
-                    style={{ width: '100%', height: '100%' }}
-                  />
+                  switch to this tab to listen
                 </div>
               )}
 
-              {/* CONTROLS */}
               <div className="flex items-center" style={{ gap: '12px' }}>
-                {/* PLAY/PAUSE — onPointerUp for instant response */}
                 <button
                   type="button"
                   onPointerUp={(e) => {
@@ -702,10 +624,7 @@ export default function TunesPage() {
                     e.stopPropagation();
                     togglePlay();
                   }}
-                  onPointerDown={(e) => {
-                    // Prevent the parent carousel / scroll from stealing the touch
-                    e.stopPropagation();
-                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
                   disabled={!controlsEnabled}
                   className="shrink-0 inline-flex items-center justify-center border-2 border-black bg-[#E2F0D9] text-black font-black rounded-lg shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 active:translate-y-0.5 transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0"
                   style={{
@@ -785,7 +704,6 @@ export default function TunesPage() {
           )}
         </div>
 
-        {/* ADD FORM */}
         <form
           onSubmit={handleAdd}
           className="border-4 border-black rounded-2xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] flex flex-col shrink-0"
@@ -839,7 +757,6 @@ export default function TunesPage() {
           </button>
         </form>
 
-        {/* QUEUE */}
         <div className="shrink-0">
           <p
             className="font-black text-white uppercase tracking-wider"
@@ -946,7 +863,6 @@ export default function TunesPage() {
         className="w-full max-w-3xl h-full flex flex-col p-3 sm:p-6 gap-3 sm:gap-4"
         style={{ minHeight: 0 }}
       >
-        {/* HEADER */}
         <div className="flex items-center justify-between shrink-0 gap-2">
           <div className="flex items-center gap-3 min-w-0">
             <div
@@ -982,7 +898,6 @@ export default function TunesPage() {
           </Link>
         </div>
 
-        {/* CAROUSEL: room ↔ solo */}
         <SwipeCarousel
           mode="fill"
           index={tabIndex}
