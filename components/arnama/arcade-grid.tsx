@@ -10,6 +10,7 @@ import {
   Lock,
   CalendarHeart,
   Sparkles,
+  Moon,
 } from 'lucide-react'
 import { Cartridge } from './cartridge'
 import { supabase } from '@/lib/supabase'
@@ -246,117 +247,209 @@ function WatchCartridge() {
     <div
       className="group relative overflow-hidden rounded-3xl border-4 border-black p-5 hover:-translate-y-1 active:translate-y-0.5 transition-transform"
       style={{
+        // deep night sky: navy → purple → midnight blue
         background: `
-          radial-gradient(ellipse at 50% 0%, rgba(255, 235, 180, 0.9) 0%, rgba(255, 235, 180, 0) 55%),
-          linear-gradient(180deg, #FFE0B8 0%, #FFB888 45%, #FF8BA7 100%)
+          radial-gradient(ellipse at 80% 10%, rgba(180, 160, 255, 0.35) 0%, rgba(180, 160, 255, 0) 55%),
+          radial-gradient(ellipse at 20% 100%, rgba(120, 100, 220, 0.4) 0%, rgba(120, 100, 220, 0) 60%),
+          linear-gradient(165deg, #1B1548 0%, #2A1F5E 45%, #3A2A6E 100%)
         `,
         boxShadow: '8px 8px 0 0 black',
         minHeight: '180px',
         display: 'flex',
         flexDirection: 'column',
-        cursor: 'pointer',
+        textDecoration: 'none',
         position: 'relative',
       }}
     >
-      {/* top decorative bars — matches other cartridges */}
+      {/* top 3 decorative bars — same as every other cartridge */}
       <div className="flex gap-1.5">
-        <span className="h-1.5 w-8 rounded-full bg-black/20" />
-        <span className="h-1.5 w-8 rounded-full bg-black/20" />
-        <span className="h-1.5 w-8 rounded-full bg-black/20" />
+        <span
+          className="h-1.5 w-8 rounded-full"
+          style={{ background: 'rgba(255,255,255,0.22)' }}
+        />
+        <span
+          className="h-1.5 w-8 rounded-full"
+          style={{ background: 'rgba(255,255,255,0.22)' }}
+        />
+        <span
+          className="h-1.5 w-8 rounded-full"
+          style={{ background: 'rgba(255,255,255,0.22)' }}
+        />
       </div>
 
-      {/* TV icon tile */}
+      {/* Moon icon in the same circular style as other cartridges */}
       <div
-        className="mt-4 flex size-14 shrink-0 items-center justify-center rounded-2xl border-4 border-black"
+        className="mt-4 flex size-14 shrink-0 items-center justify-center rounded-full border-4 border-black"
         style={{
-          background: `linear-gradient(180deg, rgba(255,255,255,0.7) 0%, rgba(255,255,255,0) 60%), #FFFDF5`,
+          background: `linear-gradient(180deg, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0) 60%), #FFFDF5`,
           boxShadow: '3px 3px 0 0 black',
         }}
       >
-        <span style={{ fontSize: '26px', lineHeight: 1 }}>📺</span>
+        <Moon
+          className="size-6"
+          strokeWidth={2.75}
+          style={{ color: '#1B1548', fill: '#1B1548' }}
+        />
       </div>
 
-      {/* title block */}
+      {/* title + subtitle */}
       <div className="mt-auto pt-4">
         <h3
           className="font-display text-lg leading-tight"
-          style={{ color: '#000' }}
+          style={{ color: '#FFFDF5' }}
         >
           WATCH
         </h3>
         <p
           className="mt-1 text-xs font-bold"
-          style={{ color: 'rgba(0,0,0,0.6)' }}
+          style={{ color: 'rgba(255,253,245,0.7)' }}
         >
           Movie night
         </p>
       </div>
 
-      {/* audience — Tom, Jerry, Rabbit hanging out */}
-      <div className="absolute bottom-3 right-3 flex -space-x-2">
+      {/* scattered stars — top right & middle */}
+      <span
+        className="absolute"
+        style={{
+          top: '18px',
+          right: '20px',
+          fontSize: '14px',
+          lineHeight: 1,
+          opacity: 0.9,
+          filter: 'drop-shadow(0 0 4px rgba(255,255,200,0.9))',
+        }}
+      >
+        ✨
+      </span>
+      <span
+        className="absolute"
+        style={{
+          top: '34px',
+          right: '56px',
+          fontSize: '10px',
+          lineHeight: 1,
+          opacity: 0.75,
+        }}
+      >
+        ⭐
+      </span>
+      <span
+        className="absolute"
+        style={{
+          top: '58px',
+          right: '24px',
+          fontSize: '9px',
+          lineHeight: 1,
+          opacity: 0.7,
+        }}
+      >
+        ✨
+      </span>
+      <span
+        className="absolute"
+        style={{
+          top: '14px',
+          left: '70px',
+          fontSize: '8px',
+          lineHeight: 1,
+          opacity: 0.6,
+        }}
+      >
+        ⭐
+      </span>
+
+      {/* tiny crescent moon peeking top-right */}
+      <span
+        className="absolute"
+        style={{
+          top: '-4px',
+          right: '-4px',
+          fontSize: '34px',
+          lineHeight: 1,
+          transform: 'rotate(-12deg)',
+          filter: 'drop-shadow(0 2px 4px rgba(255,255,220,0.5))',
+          opacity: 0.95,
+        }}
+      >
+        🌙
+      </span>
+
+      {/* popcorn as a tiny floating snack — bottom-right */}
+      <span
+        className="absolute"
+        style={{
+          bottom: '14px',
+          right: '16px',
+          fontSize: '22px',
+          lineHeight: 1,
+          transform: 'rotate(14deg)',
+          filter: 'drop-shadow(1px 2px 0 rgba(0,0,0,0.35))',
+        }}
+      >
+        🍿
+      </span>
+
+      {/* audience — Tom, Jerry, Rabbit watching from below, tucked in */}
+      <div
+        className="absolute"
+        style={{
+          bottom: '14px',
+          left: '18px',
+          display: 'flex',
+          gap: '-6px',
+          alignItems: 'flex-end',
+        }}
+      >
         <span
           style={{
-            fontSize: '26px',
+            fontSize: '20px',
             lineHeight: 1,
-            display: 'inline-block',
-            transform: 'rotate(-10deg) translateY(-2px)',
-            filter: 'drop-shadow(1px 2px 0 rgba(0,0,0,0.25))',
+            transform: 'rotate(-8deg) translateY(0)',
+            filter: 'drop-shadow(1px 2px 0 rgba(0,0,0,0.35))',
           }}
         >
           🐱
         </span>
         <span
           style={{
-            fontSize: '24px',
+            fontSize: '18px',
             lineHeight: 1,
-            display: 'inline-block',
-            transform: 'translateY(2px) rotate(6deg)',
-            filter: 'drop-shadow(1px 2px 0 rgba(0,0,0,0.25))',
+            transform: 'translateY(3px) rotate(5deg)',
+            filter: 'drop-shadow(1px 2px 0 rgba(0,0,0,0.35))',
           }}
         >
           🐭
         </span>
         <span
           style={{
-            fontSize: '26px',
+            fontSize: '20px',
             lineHeight: 1,
-            display: 'inline-block',
-            transform: 'rotate(-4deg) translateY(-2px)',
-            filter: 'drop-shadow(1px 2px 0 rgba(0,0,0,0.25))',
+            transform: 'rotate(-3deg) translateY(-1px)',
+            filter: 'drop-shadow(1px 2px 0 rgba(0,0,0,0.35))',
           }}
         >
           🐰
         </span>
       </div>
 
-      {/* popcorn floating top-right */}
-      <span
-        className="absolute"
+      {/* glass shine overlay — same recipe as other cartridges */}
+      <div
+        aria-hidden
         style={{
-          top: '14px',
-          right: '14px',
-          fontSize: '22px',
-          lineHeight: 1,
-          transform: 'rotate(18deg)',
-          filter: 'drop-shadow(1px 2px 0 rgba(0,0,0,0.2))',
+          position: 'absolute',
+          inset: 0,
+          background: `
+            linear-gradient(
+              180deg,
+              rgba(255, 255, 255, 0.22) 0%,
+              rgba(255, 255, 255, 0.05) 25%,
+              rgba(255, 255, 255, 0) 55%
+            )
+          `,
+          pointerEvents: 'none',
         }}
-      >
-        🍿
-      </span>
-
-      {/* sparkle */}
-      <span
-        className="absolute"
-        style={{
-          top: '40px',
-          right: '54px',
-          fontSize: '12px',
-          lineHeight: 1,
-          opacity: 0.75,
-        }}
-      >
-        ✨
-      </span>
+      />
     </div>
-  )
+  );
 }

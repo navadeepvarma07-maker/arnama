@@ -1,5 +1,6 @@
 'use client';
-
+import { useVoiceChat } from '@/lib/use-voice-chat';
+import { VoiceChatBar } from '@/components/arnama/voice-chat-bar';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
@@ -122,7 +123,7 @@ export default function WatchPage() {
   const chatAtBottomRef = useRef(true);
 
   const isDJ = !!userId && room?.dj_user_id === userId;
-
+  const voice = useVoiceChat('main', userId, email);
   // Load floating position from localStorage
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -876,7 +877,17 @@ export default function WatchPage() {
             )}
           </div>
         )}
-
+        {/* VOICE CHAT */}
+        <VoiceChatBar
+          micOn={voice.micOn}
+          toggleMic={voice.toggleMic}
+          participants={voice.participants}
+          connected={voice.connected}
+          error={voice.error}
+          myEmail={email}
+          mutedPeers={voice.mutedPeers}
+          togglePeerMute={voice.togglePeerMute}
+        />
         {/* REACTION ROW */}
         <div
           className="border-4 border-black shrink-0"
