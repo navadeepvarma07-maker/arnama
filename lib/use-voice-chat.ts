@@ -17,11 +17,37 @@ type Participant = {
 };
 
 const ICE_SERVERS: RTCIceServer[] = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+  {
+    urls: [
+      'stun:stun.l.google.com:19302',
+      'stun:stun1.l.google.com:19302',
+      'stun:stun2.l.google.com:19302',
+      'stun:stun3.l.google.com:19302',
+      'stun:stun4.l.google.com:19302',
+    ],
+  },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: 'stun:stun.relay.metered.ca:80' },
+  {
+    urls: 'turn:standard.relay.metered.ca:80',
+    username: 'e8dd65b92d9d0c1b6b0f01a3',
+    credential: 'vCwTXD4tXxhU6s+2',
+  },
+  {
+    urls: 'turn:standard.relay.metered.ca:80?transport=tcp',
+    username: 'e8dd65b92d9d0c1b6b0f01a3',
+    credential: 'vCwTXD4tXxhU6s+2',
+  },
+  {
+    urls: 'turn:standard.relay.metered.ca:443',
+    username: 'e8dd65b92d9d0c1b6b0f01a3',
+    credential: 'vCwTXD4tXxhU6s+2',
+  },
+  {
+    urls: 'turn:standard.relay.metered.ca:443?transport=tcp',
+    username: 'e8dd65b92d9d0c1b6b0f01a3',
+    credential: 'vCwTXD4tXxhU6s+2',
+  },
 ];
 
 const MAX_RETRIES = 3;
@@ -155,7 +181,24 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
         remoteTrack: null as MediaStreamTrack | null,
       };
       peersRef.current.set(peerId, peer);
+      // If we stay "connecting" for >12s, force retry
+      const stuckTimer = setTimeout(() => {
+        const p = peersRef.current.get(peerId);
+        if (!p) return;
+        const st = p.pc.connectionState;
+        if (st !== 'connected' && st !== 'completed') {
+          log(`timeout on ${peerEmail.split('@')[0]} — retrying`);
+          try { p.pc.close(); } catch {}
+          peersRef.current.delete(peerId);
+          setParticipants((prev) => prev.filter((x) => x.id !== peerId));
+          setTimeout(() => createPeer(peerId, peerEmail, initiator), 600);
+        }
+      }, 12000);
 
+      // clear on connect
+      pc.addEventListener('connectionstatechange', () => {
+        if (pc.connectionState === 'connected') clearTimeout(stuckTimer);
+      });
       pc.ontrack = (e) => {
         const track = e.track;
         peer.remoteTrack = track;
