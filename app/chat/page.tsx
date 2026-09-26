@@ -56,6 +56,7 @@ type GroupMember = {
   group_id: string;
   user_id: string;
   user_email: string;
+  is_admin?: boolean;
 };
 
 type CrewProfile = {
@@ -928,7 +929,7 @@ export default function ChatPage() {
     }
 
     const members = [
-      { group_id: gData.id, user_id: userId, user_email: email },
+      { group_id: gData.id, user_id: userId, user_email: email, is_admin: true },
       ...Array.from(newGroupMemberIds)
         .map((id) => {
           const p = crewProfiles.find((c) => c.id === id);

@@ -177,9 +177,19 @@ export function StoryProvider({ children }: { children: ReactNode }) {
       .then(({ data, error }) => {
         if (error) return;
         const list = (data ?? []) as Story[];
+        const myEmailLower = (myEmail ?? '').toLowerCase();
         const visible = list.filter((s) => {
           if (s.user_id === myId) return true;
           if (s.visibility === 'everyone') return true;
+          if (
+            s.visibility === 'users' &&
+            Array.isArray((s as any).visible_to_users) &&
+            (s as any).visible_to_users
+              .map((e: string) => e.toLowerCase())
+              .includes(myEmailLower)
+          ) {
+            return true;
+          }
           return false;
         });
         setStories(visible);
