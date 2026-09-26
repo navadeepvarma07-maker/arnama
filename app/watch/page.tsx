@@ -35,12 +35,7 @@ type WatchMessage = {
   created_at: string;
 };
 
-type FloatingReaction = {
-  id: number;
-  emoji: string;
-  x: number;
-  bornAt: number;
-};
+type FloatingReaction = { id: number; emoji: string; x: number; bornAt: number };
 
 type PlayerLike = {
   getCurrentTime: () => number;
@@ -52,7 +47,6 @@ type PlayerLike = {
 };
 
 const REACTION_EMOJIS = ['❤️', '🔥', '😂', '👍', '😮', '😭'];
-const VIDEO_POS_KEY = 'arnama-watch-video-pos';
 const AVATAR_COLORS = ['#E2F0D9', '#FFD1DC', '#E6E6FA', '#FFF5BA', '#D4F0F0'];
 
 let ytPromise: Promise<any> | null = null;
@@ -95,7 +89,6 @@ export default function WatchPage() {
 
   const [ytUrl, setYtUrl] = useState('');
   const [ytError, setYtError] = useState('');
-
   const [localFile, setLocalFile] = useState<File | null>(null);
   const [localUrl, setLocalUrl] = useState<string | null>(null);
 
@@ -103,15 +96,12 @@ export default function WatchPage() {
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
 
-  // Chat
   const [messages, setMessages] = useState<WatchMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [chatOpen, setChatOpen] = useState(true);
 
-  // Reactions (floaters)
   const [floaters, setFloaters] = useState<FloatingReaction[]>([]);
 
-  // Layout modes
   const [floating, setFloating] = useState(false);
   const [immersive, setImmersive] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
@@ -136,21 +126,16 @@ export default function WatchPage() {
 
   const isDJ = !!userId && room?.dj_user_id === userId;
 
-  // Voice chat
   const voice = useVoiceChat('main', userId, email);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  useEffect(() => { setMounted(true); }, []);
 
-  // Load floating position
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      const raw = window.localStorage.getItem(VIDEO_POS_KEY);
+      const raw = window.localStorage.getItem('arnama-watch-video-pos');
       if (raw) {
-        const parsed = JSON.parse(raw);
-        setVideoPos(parsed);
+        setVideoPos(JSON.parse(raw));
         setFloating(true);
       }
     } catch {}
@@ -159,19 +144,11 @@ export default function WatchPage() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (floating && videoPos) {
-      window.localStorage.setItem(VIDEO_POS_KEY, JSON.stringify(videoPos));
+      window.localStorage.setItem('arnama-watch-video-pos', JSON.stringify(videoPos));
     }
   }, [floating, videoPos]);
 
-  // Force YouTube player to recalc size on layout change
-  useEffect(() => {
-    const t = setTimeout(() => {
-      try { window.dispatchEvent(new Event('resize')); } catch {}
-    }, 120);
-    return () => clearTimeout(t);
-  }, [immersive, floating]);
-
-  // Esc exits immersive
+  // ESC exit immersive
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape' && immersive) setImmersive(false);
@@ -180,12 +157,9 @@ export default function WatchPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [immersive]);
 
-  // Auto-hide controls in immersive
+  // Auto-hide controls
   useEffect(() => {
-    if (!immersive) {
-      setControlsVisible(true);
-      return;
-    }
+    if (!immersive) { setControlsVisible(true); return; }
     function poke() {
       setControlsVisible(true);
       if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
@@ -203,7 +177,6 @@ export default function WatchPage() {
     };
   }, [immersive]);
 
-  // AUTH
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       const u = data.user;
@@ -214,7 +187,6 @@ export default function WatchPage() {
     });
   }, []);
 
-  // LOAD ROOM
   useEffect(() => {
     if (!email) return;
     supabase.from('watch_rooms').select('*').eq('id', 'main').single().then(({ data }) => {
@@ -222,7 +194,6 @@ export default function WatchPage() {
     });
   }, [email]);
 
-  // REALTIME room state
   useEffect(() => {
     if (!email) return;
     const ch = supabase
@@ -234,7 +205,6 @@ export default function WatchPage() {
     return () => { supabase.removeChannel(ch); };
   }, [email]);
 
-  // PRESENCE
   useEffect(() => {
     if (!userId || !email) return;
     const ch = supabase.channel('watch-presence', { config: { presence: { key: userId } } });
@@ -244,20 +214,15 @@ export default function WatchPage() {
     return () => { supabase.removeChannel(ch); };
   }, [userId, email]);
 
-  // LOAD messages
   useEffect(() => {
     if (!email) return;
     supabase.from('watch_messages').select('*').order('created_at', { ascending: true }).limit(200)
-      .then(({ data }) => {
-        if (data) setMessages(data as WatchMessage[]);
-      });
+      .then(({ data }) => { if (data) setMessages(data as WatchMessage[]); });
   }, [email]);
 
-  // Realtime messages + reactions
   useEffect(() => {
     if (!email) return;
     const suffix = Math.random().toString(36).slice(2, 8);
-
     const ch = supabase
       .channel(`watch-chat-${suffix}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'watch_messages' }, (p) => {
@@ -267,9 +232,7 @@ export default function WatchPage() {
           setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 60);
         }
       })
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'watch_messages' }, () => {
-        setMessages([]);
-      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'watch_messages' }, () => setMessages([]))
       .subscribe();
 
     const chR = supabase
@@ -280,13 +243,9 @@ export default function WatchPage() {
       })
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(ch);
-      supabase.removeChannel(chR);
-    };
+    return () => { supabase.removeChannel(ch); supabase.removeChannel(chR); };
   }, [email]);
 
-  // Expire floaters
   useEffect(() => {
     const i = setInterval(() => {
       const now = Date.now();
@@ -311,7 +270,7 @@ export default function WatchPage() {
       container.innerHTML = '';
       const player = new YT.Player(container, {
         videoId: room.video_id,
-        playerVars: { controls: 0, disablekb: 1, modestbranding: 1, rel: 0, playsinline: 1, fs: 0 },
+        playerVars: { controls: 0, disablekb: 1, modestbranding: 1, rel: 0, playsinline: 1 },
         events: {
           onReady: () => {
             if (cancelled) return;
@@ -335,7 +294,6 @@ export default function WatchPage() {
 
   useEffect(() => () => { try { ytPlayerRef.current?.destroy(); } catch {} }, []);
 
-  // ----- PLAYER ABSTRACTION -----
   const getPlayer = useCallback((): PlayerLike | null => {
     if (room?.mode === 'youtube' && ytPlayerRef.current) {
       const yt = ytPlayerRef.current;
@@ -362,7 +320,6 @@ export default function WatchPage() {
     return null;
   }, [room?.mode]);
 
-  // ----- TICKER -----
   useEffect(() => {
     const i = setInterval(() => {
       const p = getPlayer();
@@ -374,7 +331,6 @@ export default function WatchPage() {
     return () => clearInterval(i);
   }, [getPlayer]);
 
-  // ----- SYNC LOOP (followers) -----
   useEffect(() => {
     if (!room || isDJ) return;
     const i = setInterval(() => {
@@ -385,29 +341,19 @@ export default function WatchPage() {
         (room.is_playing && room.started_at
           ? (Date.now() - new Date(room.started_at).getTime()) / 1000
           : 0);
-      const actual = p.getCurrentTime();
-      const drift = Math.abs(actual - computed);
+      const drift = Math.abs(p.getCurrentTime() - computed);
       const threshold = room.is_playing ? 1.5 : 0.3;
-      if (drift > threshold) {
-        try { p.seekTo(computed); } catch {}
-      }
-      if (room.is_playing && !p.isPlaying()) {
-        try { p.play(); } catch {}
-      } else if (!room.is_playing && p.isPlaying()) {
-        try { p.pause(); } catch {}
-      }
+      if (drift > threshold) { try { p.seekTo(computed); } catch {} }
+      if (room.is_playing && !p.isPlaying()) { try { p.play(); } catch {} }
+      else if (!room.is_playing && p.isPlaying()) { try { p.pause(); } catch {} }
     }, 800);
     return () => clearInterval(i);
   }, [room, isDJ, getPlayer]);
 
-  // ----- ACTIONS -----
   async function updateRoom(patch: Partial<RoomState>) {
     if (!userId || !email) return;
     await supabase.from('watch_rooms').update({
-      ...patch,
-      dj_user_id: userId,
-      dj_email: email,
-      updated_at: new Date().toISOString(),
+      ...patch, dj_user_id: userId, dj_email: email, updated_at: new Date().toISOString(),
     }).eq('id', 'main');
   }
 
@@ -416,8 +362,7 @@ export default function WatchPage() {
     const p = getPlayer();
     const t = p?.getCurrentTime() ?? 0;
     await updateRoom({
-      dj_user_id: userId,
-      dj_email: email,
+      dj_user_id: userId, dj_email: email,
       position_seconds: t,
       started_at: room?.is_playing ? new Date().toISOString() : null,
     });
@@ -431,13 +376,8 @@ export default function WatchPage() {
     ytPlayerRef.current = null;
     loadedYtIdRef.current = null;
     await updateRoom({
-      mode: 'youtube',
-      video_id: id,
-      video_title: null,
-      local_hint: null,
-      is_playing: false,
-      position_seconds: 0,
-      started_at: null,
+      mode: 'youtube', video_id: id, video_title: null, local_hint: null,
+      is_playing: false, position_seconds: 0, started_at: null,
     });
     setYtUrl('');
     if (localUrl) URL.revokeObjectURL(localUrl);
@@ -452,13 +392,8 @@ export default function WatchPage() {
     const url = URL.createObjectURL(f);
     setLocalUrl(url);
     updateRoom({
-      mode: 'local',
-      video_id: null,
-      video_title: f.name,
-      local_hint: f.name,
-      is_playing: false,
-      position_seconds: 0,
-      started_at: null,
+      mode: 'local', video_id: null, video_title: f.name, local_hint: f.name,
+      is_playing: false, position_seconds: 0, started_at: null,
     });
   }
 
@@ -466,8 +401,7 @@ export default function WatchPage() {
     const p = getPlayer();
     if (!p) return;
     if (!isDJ) {
-      if (p.isPlaying()) p.pause();
-      else p.play();
+      if (p.isPlaying()) p.pause(); else p.play();
       return;
     }
     const next = !p.isPlaying();
@@ -512,7 +446,6 @@ export default function WatchPage() {
     setFloaters([]);
   }
 
-  // ----- CHAT -----
   async function sendChat(e: React.FormEvent) {
     e.preventDefault();
     const text = chatInput.trim();
@@ -532,14 +465,12 @@ export default function WatchPage() {
     chatAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
   }
 
-  // ----- REACTIONS -----
   async function sendReaction(emoji: string) {
     if (!email) return;
     const x = 20 + Math.random() * 60;
     await supabase.from('watch_reactions').insert({ user_email: email, emoji, x });
   }
 
-  // ----- FLOATING DRAG / RESIZE -----
   function startDrag(e: React.PointerEvent<HTMLDivElement>) {
     if (!videoPos) return;
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -559,7 +490,6 @@ export default function WatchPage() {
     dragRef.current = null;
     setDraggingVideo(false);
   }
-
   function startResize(e: React.PointerEvent<HTMLDivElement>) {
     if (!videoPos) return;
     e.stopPropagation();
@@ -582,17 +512,14 @@ export default function WatchPage() {
   }
 
   function enterFloating() {
-    const w = 360;
-    const h = 202;
+    const w = 360; const h = 202;
     const x = Math.max(8, window.innerWidth - w - 20);
     const y = Math.max(8, window.innerHeight - h - 100);
     setVideoPos({ x, y, w, h });
     setFloating(true);
     setImmersive(false);
   }
-  function exitFloating() {
-    setFloating(false);
-  }
+  function exitFloating() { setFloating(false); }
 
   function enterImmersive() {
     setFloating(false);
@@ -603,9 +530,7 @@ export default function WatchPage() {
   function handleVideoTap() {
     const now = Date.now();
     if (now - lastTapRef.current < 300) {
-      // double tap
-      if (immersive) setImmersive(false);
-      else enterImmersive();
+      if (immersive) setImmersive(false); else enterImmersive();
       lastTapRef.current = 0;
     } else {
       lastTapRef.current = now;
@@ -613,7 +538,6 @@ export default function WatchPage() {
     }
   }
 
-  // ----- SEEK BAR -----
   const barRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const [dragPos, setDragPos] = useState(0);
@@ -658,10 +582,41 @@ export default function WatchPage() {
   const showEmpty = !room?.video_id && !room?.local_hint;
   const hasVideo = showYTPlayer || showLocalPlayer;
 
-  // ============================================================
-  // VIDEO BLOCK — renders inline, floating, or immersive
-  // ============================================================
-  const videoBlock = (
+  // =============================================================
+  // VIDEO CONTAINER — SINGLE PLACE — REPOSITIONED VIA STYLE ONLY
+  // =============================================================
+  let videoWrapStyle: React.CSSProperties;
+  if (immersive) {
+    videoWrapStyle = {
+      position: 'fixed', inset: 0, zIndex: 9998,
+      background: '#000', overflow: 'hidden',
+    };
+  } else if (floating && videoPos) {
+    videoWrapStyle = {
+      position: 'fixed',
+      left: videoPos.x, top: videoPos.y,
+      width: videoPos.w, height: videoPos.h,
+      zIndex: 800,
+      borderRadius: '18px',
+      border: '4px solid black',
+      boxShadow: '6px 6px 0 0 black',
+      overflow: 'hidden',
+      background: '#000',
+    };
+  } else {
+    videoWrapStyle = {
+      position: 'relative',
+      width: '100%',
+      aspectRatio: '16 / 9',
+      borderRadius: '18px',
+      border: '4px solid black',
+      boxShadow: '6px 6px 0 0 black',
+      overflow: 'hidden',
+      background: '#000',
+    };
+  }
+
+  const videoInner = (
     <>
       {showYTPlayer && (
         <div ref={ytContainerRef} style={{ width: '100%', height: '100%' }} />
@@ -708,19 +663,15 @@ export default function WatchPage() {
           <span style={{ fontSize: '44px' }}>🎬</span>
           <p style={{ margin: 0, fontSize: '16px', fontWeight: 900 }}>watch together</p>
           <p style={{ margin: 0, fontSize: '12px', color: 'rgba(255,255,255,0.6)', maxWidth: '320px' }}>
-            {isDJ ? 'paste a youtube link or open a local file below' : 'tap "take the wheel" to become DJ and start something'}
+            {isDJ ? 'paste a youtube link or open a local file below' : 'tap "take the wheel" to become DJ'}
           </p>
         </div>
       )}
-
-      {/* floating reactions */}
       {floaters.map((f) => (
         <span key={f.id} aria-hidden style={{
           position: 'absolute',
-          bottom: '20px',
-          left: `${f.x}%`,
-          fontSize: immersive ? '44px' : '32px',
-          lineHeight: 1,
+          bottom: '20px', left: `${f.x}%`,
+          fontSize: immersive ? '44px' : '32px', lineHeight: 1,
           pointerEvents: 'none',
           animation: 'reaction-float 2.2s ease-out forwards',
           filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.6))',
@@ -730,38 +681,25 @@ export default function WatchPage() {
     </>
   );
 
-  // ---------- IMMERSIVE OVERLAY (rendered via portal) ----------
-  const immersiveOverlay = immersive && mounted ? createPortal(
-    <div
-      style={{
-        position: 'fixed', inset: 0, background: '#000', zIndex: 9999,
-        display: 'flex', flexDirection: 'column',
-      }}
-      onClick={(e) => {
-        // don't toggle if clicking on controls
-        if ((e.target as HTMLElement).closest('[data-controls]')) return;
-        handleVideoTap();
-      }}
-    >
-      {/* video fills the screen */}
-      <div style={{ position: 'absolute', inset: 0 }}>{videoBlock}</div>
-
+  // =============================================================
+  // IMMERSIVE CHROME (top bar, bottom bar, chat drawer)
+  // =============================================================
+  const immersiveChrome = immersive && mounted ? createPortal(
+    <>
       {/* TOP BAR */}
       <div
         data-controls
         style={{
-          position: 'absolute', top: 0, left: 0, right: 0,
-          padding: '14px 16px',
+          position: 'fixed', top: 0, left: 0, right: 0,
+          padding: '14px 16px', zIndex: 9999,
           background: 'linear-gradient(180deg, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0) 100%)',
           display: 'flex', alignItems: 'flex-start', gap: '10px',
           opacity: controlsVisible ? 1 : 0,
           transition: 'opacity 0.25s',
           pointerEvents: controlsVisible ? 'auto' : 'none',
-          zIndex: 10,
         }}
       >
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {/* title + dj */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <p style={{
               margin: 0, fontSize: '15px', fontWeight: 900, color: '#FFF',
@@ -782,23 +720,17 @@ export default function WatchPage() {
               </span>
             )}
           </div>
-
-          {/* voice chips */}
           {!voice.error && (voice.micOn || voice.participants.length > 0) && (
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
               {email && (
                 <ImmersiveVoiceChip
-                  email={email}
-                  speaking={voice.micOn}
-                  mine
-                  muted={!voice.micOn}
+                  email={email} speaking={voice.micOn} mine muted={!voice.micOn}
                   color={AVATAR_COLORS[0]}
                 />
               )}
               {voice.participants.map((p, i) => (
                 <ImmersiveVoiceChip
-                  key={p.id}
-                  email={p.email}
+                  key={p.id} email={p.email}
                   speaking={p.speaking}
                   muted={voice.mutedPeers.has(p.id)}
                   color={AVATAR_COLORS[(i + 1) % AVATAR_COLORS.length]}
@@ -808,11 +740,9 @@ export default function WatchPage() {
           )}
         </div>
 
-        {/* right controls */}
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
-          {/* mic */}
           <button
-            onClick={(e) => { e.stopPropagation(); voice.toggleMic(); }}
+            onClick={() => voice.toggleMic()}
             disabled={!!voice.error}
             style={{
               width: '40px', height: '40px', borderRadius: '999px',
@@ -821,14 +751,11 @@ export default function WatchPage() {
               color: '#FFF', cursor: voice.error ? 'not-allowed' : 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
-            title={voice.error || (voice.micOn ? 'mute' : 'unmute')}
           >
             {voice.micOn ? <Mic className="size-4" strokeWidth={3} /> : <MicOff className="size-4" strokeWidth={3} />}
           </button>
-
-          {/* chat drawer toggle */}
           <button
-            onClick={(e) => { e.stopPropagation(); setChatDrawerOpen((v) => !v); }}
+            onClick={() => setChatDrawerOpen((v) => !v)}
             style={{
               width: '40px', height: '40px', borderRadius: '999px',
               border: '2px solid #FFF',
@@ -837,14 +764,11 @@ export default function WatchPage() {
               cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
-            title="chat"
           >
             <MessageSquare className="size-4" strokeWidth={3} />
           </button>
-
-          {/* exit immersive */}
           <button
-            onClick={(e) => { e.stopPropagation(); setImmersive(false); }}
+            onClick={() => setImmersive(false)}
             style={{
               width: '40px', height: '40px', borderRadius: '999px',
               border: '2px solid #FFF',
@@ -852,7 +776,6 @@ export default function WatchPage() {
               cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
-            title="exit fullscreen"
           >
             <Minimize2 className="size-4" strokeWidth={3} />
           </button>
@@ -864,33 +787,29 @@ export default function WatchPage() {
         data-controls
         onClick={(e) => e.stopPropagation()}
         style={{
-          position: 'absolute', bottom: 0, left: 0, right: 0,
-          padding: '16px 20px 20px',
+          position: 'fixed', bottom: 0, left: 0, right: 0,
+          padding: '16px 20px 20px', zIndex: 9999,
           background: 'linear-gradient(0deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%)',
           opacity: controlsVisible ? 1 : 0,
           transition: 'opacity 0.25s',
           pointerEvents: controlsVisible ? 'auto' : 'none',
-          zIndex: 10,
           display: 'flex', flexDirection: 'column', gap: '12px',
         }}
       >
-        {/* seek bar */}
         <div
-          ref={barRef}
           onPointerDown={onBarDown} onPointerMove={onBarMove}
           onPointerUp={onBarUp} onPointerCancel={onBarUp}
           style={{
             height: '6px', width: '100%',
             background: 'rgba(255,255,255,0.25)',
-            borderRadius: '999px',
-            position: 'relative', cursor: duration > 0 ? 'pointer' : 'default',
+            borderRadius: '999px', position: 'relative',
+            cursor: duration > 0 ? 'pointer' : 'default',
             touchAction: 'none',
           }}
         >
           <div style={{
-            height: '100%', width: `${pct}%`,
-            background: '#FF8BA7', borderRadius: '999px',
-            transition: dragging ? 'none' : 'width 0.15s linear',
+            height: '100%', width: `${pct}%`, background: '#FF8BA7',
+            borderRadius: '999px', transition: dragging ? 'none' : 'width 0.15s linear',
           }} />
           {duration > 0 && (
             <div style={{
@@ -905,8 +824,6 @@ export default function WatchPage() {
             }} />
           )}
         </div>
-
-        {/* controls + reactions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
           <button
             onClick={togglePlay}
@@ -916,8 +833,7 @@ export default function WatchPage() {
               border: '2px solid #FFF',
               background: hasVideo ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.3)',
               color: '#000', cursor: hasVideo ? 'pointer' : 'not-allowed',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
             }}
           >
             {isPlaying
@@ -925,17 +841,13 @@ export default function WatchPage() {
               : <Play className="size-6" strokeWidth={3} style={{ fill: '#000', marginLeft: '2px' }} />
             }
           </button>
-
           <span style={{
             fontSize: '14px', fontWeight: 900, color: '#FFF',
             fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
           }}>
             {fmt(displayedTime)} / {fmt(duration)}
           </span>
-
           <div style={{ flex: 1 }} />
-
-          {/* reaction row */}
           <div style={{ display: 'flex', gap: '6px' }}>
             {REACTION_EMOJIS.map((e) => (
               <button
@@ -959,21 +871,18 @@ export default function WatchPage() {
       {chatDrawerOpen && (
         <div
           data-controls
-          onClick={(e) => e.stopPropagation()}
           style={{
-            position: 'absolute', top: 0, right: 0, bottom: 0,
+            position: 'fixed', top: 0, right: 0, bottom: 0,
             width: 'min(360px, 85vw)',
             background: 'rgba(255,253,245,0.98)',
             backdropFilter: 'blur(20px)',
             WebkitBackdropFilter: 'blur(20px)',
             borderLeft: '4px solid black',
-            display: 'flex', flexDirection: 'column',
-            zIndex: 20,
+            display: 'flex', flexDirection: 'column', zIndex: 10000,
           }}
         >
           <div style={{
-            padding: '14px 16px',
-            borderBottom: '3px solid black',
+            padding: '14px 16px', borderBottom: '3px solid black',
             background: '#E6E6FA',
             display: 'flex', alignItems: 'center', gap: '8px',
           }}>
@@ -997,10 +906,7 @@ export default function WatchPage() {
             style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 14px' }}
           >
             {messages.length === 0 ? (
-              <p style={{
-                textAlign: 'center', fontStyle: 'italic',
-                color: 'rgba(0,0,0,0.4)', fontSize: '12px', margin: '20px 0',
-              }}>
+              <p style={{ textAlign: 'center', fontStyle: 'italic', color: 'rgba(0,0,0,0.4)', fontSize: '12px', margin: '20px 0' }}>
                 say something while you watch 🍿
               </p>
             ) : (
@@ -1014,24 +920,17 @@ export default function WatchPage() {
                     justifyContent: mine ? 'flex-end' : 'flex-start',
                   }}>
                     <div style={{
-                      maxWidth: '82%',
-                      border: '2px solid black',
+                      maxWidth: '82%', border: '2px solid black',
                       borderRadius: mine ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
                       background: mine ? '#E2F0D9' : '#FFD1DC',
-                      padding: '6px 10px',
-                      boxShadow: '2px 2px 0 0 black',
+                      padding: '6px 10px', boxShadow: '2px 2px 0 0 black',
                     }}>
                       <p style={{
                         margin: 0, fontSize: '9px', fontWeight: 900,
                         textTransform: 'uppercase', letterSpacing: '0.06em',
                         color: 'rgba(0,0,0,0.55)',
-                      }}>
-                        {name} · {time}
-                      </p>
-                      <p style={{
-                        margin: '2px 0 0', fontSize: '13px', color: '#000',
-                        lineHeight: 1.35, wordBreak: 'break-word',
-                      }}>
+                      }}>{name} · {time}</p>
+                      <p style={{ margin: '2px 0 0', fontSize: '13px', color: '#000', lineHeight: 1.35, wordBreak: 'break-word' }}>
                         {m.content}
                       </p>
                     </div>
@@ -1041,31 +940,22 @@ export default function WatchPage() {
             )}
             <div ref={chatBottomRef} style={{ height: '2px' }} />
           </div>
-          <form
-            onSubmit={sendChat}
-            style={{
-              borderTop: '3px solid black',
-              background: '#E6E6FA',
-              display: 'flex', alignItems: 'stretch',
-              padding: '10px', gap: '8px',
-            }}
-          >
+          <form onSubmit={sendChat} style={{
+            borderTop: '3px solid black', background: '#E6E6FA',
+            display: 'flex', alignItems: 'stretch', padding: '10px', gap: '8px',
+          }}>
             <input
-              type="text"
-              value={chatInput}
+              type="text" value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               placeholder="say something..."
               style={{
-                flex: 1, minWidth: 0,
-                border: '2px solid black', borderRadius: '12px',
-                background: '#FFFDF5', color: '#000',
-                fontSize: '13px', padding: '10px 12px',
-                outline: 'none', fontWeight: 600,
+                flex: 1, minWidth: 0, border: '2px solid black', borderRadius: '12px',
+                background: '#FFFDF5', color: '#000', fontSize: '13px',
+                padding: '10px 12px', outline: 'none', fontWeight: 600,
               }}
             />
             <button
-              type="submit"
-              disabled={!chatInput.trim()}
+              type="submit" disabled={!chatInput.trim()}
               style={{
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                 padding: '10px 14px', border: '2px solid black', borderRadius: '12px',
@@ -1073,8 +963,7 @@ export default function WatchPage() {
                 color: '#000', fontWeight: 900, fontSize: '12px',
                 boxShadow: '3px 3px 0 0 black',
                 cursor: chatInput.trim() ? 'pointer' : 'not-allowed',
-                opacity: chatInput.trim() ? 1 : 0.5,
-                flexShrink: 0, minWidth: '48px',
+                opacity: chatInput.trim() ? 1 : 0.5, flexShrink: 0, minWidth: '48px',
               }}
             >
               <Send className="size-4" strokeWidth={2.75} />
@@ -1082,35 +971,21 @@ export default function WatchPage() {
           </form>
         </div>
       )}
-    </div>,
+    </>,
     document.body
   ) : null;
 
-  // ---------- FLOATING ----------
-  const floatingStyles: React.CSSProperties = videoPos
-    ? {
-        position: 'fixed',
-        left: videoPos.x,
-        top: videoPos.y,
-        width: videoPos.w,
-        height: videoPos.h,
-        zIndex: 800,
-        borderRadius: '18px',
-        border: '4px solid black',
-        boxShadow: '6px 6px 0 0 black',
-        overflow: 'hidden',
-        background: '#000',
-      }
-    : {};
-
   return (
     <div className="fixed inset-0 bg-[#1a0b2e] font-mono flex flex-col overflow-hidden">
-      {/* IMMERSIVE VIEW */}
-      {immersiveOverlay}
+      {/* IMMERSIVE CHROME (bars only, not video) */}
+      {immersiveChrome}
 
-      {/* FLOATING WINDOW */}
-      {floating && videoPos && !immersive && (
-        <div style={floatingStyles}>
+      {/* SINGLE VIDEO CONTAINER — never unmounts */}
+      <div style={videoWrapStyle} onDoubleClick={handleVideoTap}>
+        {videoInner}
+
+        {/* floating drag bar */}
+        {floating && !immersive && (
           <div
             onPointerDown={startDrag}
             onPointerMove={onDrag}
@@ -1126,10 +1001,12 @@ export default function WatchPage() {
           >
             <GripHorizontal className="size-3" strokeWidth={3} style={{ color: '#FFF', opacity: 0.7 }} />
           </div>
+        )}
 
+        {/* floating dock button */}
+        {floating && !immersive && (
           <button
             onClick={exitFloating}
-            aria-label="Dock video"
             style={{
               position: 'absolute', top: '24px', right: '8px', width: '26px', height: '26px',
               border: '2px solid #FFF', borderRadius: '999px',
@@ -1140,10 +1017,12 @@ export default function WatchPage() {
           >
             <Minimize2 className="size-3" strokeWidth={3} />
           </button>
+        )}
 
+        {/* floating fullscreen button */}
+        {floating && !immersive && (
           <button
             onClick={enterImmersive}
-            aria-label="Fullscreen"
             style={{
               position: 'absolute', top: '24px', right: '40px', width: '26px', height: '26px',
               border: '2px solid #FFF', borderRadius: '999px',
@@ -1154,11 +1033,10 @@ export default function WatchPage() {
           >
             <Maximize2 className="size-3" strokeWidth={3} />
           </button>
+        )}
 
-          <div style={{ position: 'absolute', inset: 0 }}>
-            {videoBlock}
-          </div>
-
+        {/* resize handle */}
+        {floating && !immersive && (
           <div
             onPointerDown={startResize}
             onPointerMove={onResize}
@@ -1178,21 +1056,52 @@ export default function WatchPage() {
               margin: '0 3px 3px 0', borderRadius: '0 0 4px 0',
             }} />
           </div>
-        </div>
-      )}
+        )}
 
-      {/* NORMAL LAYOUT */}
+        {/* float + full buttons when docked */}
+        {!floating && !immersive && !showEmpty && (
+          <div style={{
+            position: 'absolute', top: '10px', right: '10px',
+            display: 'flex', gap: '6px', zIndex: 5,
+          }}>
+            <button
+              onClick={enterFloating}
+              style={{
+                padding: '6px 10px', border: '2px solid #FFF', borderRadius: '999px',
+                background: 'rgba(0,0,0,0.55)', color: '#FFF',
+                fontSize: '11px', fontWeight: 900, cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', gap: '4px',
+              }}
+            >
+              <GripHorizontal className="size-3" strokeWidth={3} /> float
+            </button>
+            <button
+              onClick={enterImmersive}
+              style={{
+                padding: '6px 10px', border: '2px solid #FFF', borderRadius: '999px',
+                background: 'rgba(0,0,0,0.55)', color: '#FFF',
+                fontSize: '11px', fontWeight: 900, cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', gap: '4px',
+              }}
+            >
+              <Maximize2 className="size-3" strokeWidth={3} /> full
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* NORMAL LAYOUT (when not immersive) */}
       {!immersive && (
         <div
           className="mx-auto flex w-full max-w-3xl flex-1 min-h-0 flex-col gap-2 overflow-y-auto"
           style={{
+            marginTop: '8px',
             paddingTop: 'max(8px, env(safe-area-inset-top))',
             paddingBottom: 'max(8px, env(safe-area-inset-bottom))',
             paddingLeft: 'max(8px, env(safe-area-inset-left))',
             paddingRight: 'max(8px, env(safe-area-inset-right))',
           }}
         >
-          {/* HEADER */}
           <div className="flex items-center justify-between shrink-0 gap-2">
             <div className="flex items-center gap-2 min-w-0">
               <div className="gloss-shine flex size-10 shrink-0 items-center justify-center rounded-2xl border-4 border-black"
@@ -1207,11 +1116,9 @@ export default function WatchPage() {
             <div className="flex items-center gap-2 shrink-0">
               <button
                 onClick={() => setChatOpen((v) => !v)}
-                aria-label="Toggle chat"
                 style={{
                   width: '44px', height: '44px', border: '4px solid black',
-                  borderRadius: '14px',
-                  background: chatOpen ? '#FF8BA7' : '#E2F0D9',
+                  borderRadius: '14px', background: chatOpen ? '#FF8BA7' : '#E2F0D9',
                   color: '#000', fontWeight: 900, cursor: 'pointer',
                   boxShadow: '4px 4px 0 0 black',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1227,137 +1134,71 @@ export default function WatchPage() {
             </div>
           </div>
 
-          {/* DOCKED VIDEO */}
-          {!floating && (
-            <div
-              className="relative border-4 border-black rounded-2xl overflow-hidden shrink-0"
-              style={{
-                background: '#000', boxShadow: '6px 6px 0 0 black',
-                aspectRatio: '16 / 9',
-              }}
-              onDoubleClick={handleVideoTap}
-            >
-              <div style={{ position: 'absolute', inset: 0 }}>{videoBlock}</div>
-
-              {/* float + fullscreen buttons */}
-              {!showEmpty && (
-                <div style={{
-                  position: 'absolute', top: '10px', right: '10px',
-                  display: 'flex', gap: '6px', zIndex: 5,
-                }}>
-                  <button
-                    onClick={enterFloating}
-                    aria-label="Float video"
-                    style={{
-                      padding: '6px 10px', border: '2px solid #FFF', borderRadius: '999px',
-                      background: 'rgba(0,0,0,0.55)', color: '#FFF',
-                      fontSize: '11px', fontWeight: 900, cursor: 'pointer',
-                      display: 'inline-flex', alignItems: 'center', gap: '4px',
-                    }}
-                  >
-                    <GripHorizontal className="size-3" strokeWidth={3} /> float
-                  </button>
-                  <button
-                    onClick={enterImmersive}
-                    aria-label="Fullscreen"
-                    style={{
-                      padding: '6px 10px', border: '2px solid #FFF', borderRadius: '999px',
-                      background: 'rgba(0,0,0,0.55)', color: '#FFF',
-                      fontSize: '11px', fontWeight: 900, cursor: 'pointer',
-                      display: 'inline-flex', alignItems: 'center', gap: '4px',
-                    }}
-                  >
-                    <Maximize2 className="size-3" strokeWidth={3} /> full
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* VOICE CHAT */}
           <VoiceChatBar
-          micOn={voice.micOn}
-          toggleMic={voice.toggleMic}
-          participants={voice.participants}
-          connected={voice.connected}
-          error={voice.error}
-          myEmail={email}
-          mutedPeers={voice.mutedPeers}
-          togglePeerMute={voice.togglePeerMute}
-          debug={voice.debug}
-          onRetry={voice.reconnect}
-          onTestTone={voice.playTestTone}
-          ctxState={voice.ctxState}
-        />
+            micOn={voice.micOn}
+            toggleMic={voice.toggleMic}
+            participants={voice.participants}
+            connected={voice.connected}
+            error={voice.error}
+            myEmail={email}
+            mutedPeers={voice.mutedPeers}
+            togglePeerMute={voice.togglePeerMute}
+            debug={voice.debug}
+            onRetry={voice.reconnect}
+            onTestTone={voice.playTestTone}
+          />
 
-          {/* REACTION ROW */}
-          <div
-            className="border-4 border-black shrink-0"
+          <div className="border-4 border-black shrink-0"
             style={{
               borderRadius: '18px',
               background: `linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%), #FFF5BA`,
-              padding: '10px 12px',
-              boxShadow: '4px 4px 0 0 black',
+              padding: '10px 12px', boxShadow: '4px 4px 0 0 black',
               display: 'flex', alignItems: 'center', gap: '8px',
-            }}
-          >
-            <span style={{
-              fontSize: '10px', fontWeight: 900,
-              color: 'rgba(0,0,0,0.55)', textTransform: 'uppercase',
-              letterSpacing: '0.08em', flexShrink: 0,
             }}>
-              react
-            </span>
+            <span style={{
+              fontSize: '10px', fontWeight: 900, color: 'rgba(0,0,0,0.55)',
+              textTransform: 'uppercase', letterSpacing: '0.08em', flexShrink: 0,
+            }}>react</span>
             <div style={{ display: 'flex', gap: '4px', flex: 1, flexWrap: 'wrap' }}>
               {REACTION_EMOJIS.map((e) => (
-                <button
-                  key={e}
-                  onClick={() => sendReaction(e)}
+                <button key={e} onClick={() => sendReaction(e)}
                   style={{
                     width: '40px', height: '40px', border: '2px solid black',
-                    borderRadius: '999px', background: '#FFFDF5',
-                    cursor: 'pointer', fontSize: '20px', lineHeight: 1,
+                    borderRadius: '999px', background: '#FFFDF5', cursor: 'pointer',
+                    fontSize: '20px', lineHeight: 1,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     boxShadow: '2px 2px 0 0 black', padding: 0,
-                  }}
-                >{e}</button>
+                  }}>{e}</button>
               ))}
             </div>
           </div>
 
-          {/* CONTROLS */}
-          <div
-            className="border-4 border-black shrink-0"
+          <div className="border-4 border-black shrink-0"
             style={{
               borderRadius: '18px',
               background: `linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%), #E6E6FA`,
-              padding: '12px',
-              boxShadow: '4px 4px 0 0 black',
-            }}
-          >
+              padding: '12px', boxShadow: '4px 4px 0 0 black',
+            }}>
             <div
               ref={barRef}
               onPointerDown={onBarDown} onPointerMove={onBarMove}
               onPointerUp={onBarUp} onPointerCancel={onBarUp}
               style={{
                 height: '18px', width: '100%',
-                background: 'rgba(0,0,0,0.15)',
-                borderRadius: '999px', border: '2px solid black',
-                position: 'relative', cursor: duration > 0 ? 'pointer' : 'default',
-                touchAction: 'none',
+                background: 'rgba(0,0,0,0.15)', borderRadius: '999px',
+                border: '2px solid black', position: 'relative',
+                cursor: duration > 0 ? 'pointer' : 'default', touchAction: 'none',
               }}
             >
               <div style={{
                 height: '100%', width: `${pct}%`,
                 background: `linear-gradient(180deg, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0) 60%), #7FB89B`,
-                borderRadius: '999px',
-                transition: dragging ? 'none' : 'width 0.15s linear',
+                borderRadius: '999px', transition: dragging ? 'none' : 'width 0.15s linear',
               }} />
               {duration > 0 && (
                 <div style={{
                   position: 'absolute', top: '50%', left: `${pct}%`,
-                  width: '22px', height: '22px',
-                  marginLeft: '-11px', marginTop: '-11px',
+                  width: '22px', height: '22px', marginLeft: '-11px', marginTop: '-11px',
                   borderRadius: '999px', background: '#FFFDF5',
                   border: '3px solid black', boxShadow: '2px 2px 0 0 black',
                   pointerEvents: 'none',
@@ -1365,37 +1206,29 @@ export default function WatchPage() {
                 }} />
               )}
             </div>
-
             <div className="flex items-center gap-3 mt-3">
               <button
-                onClick={togglePlay}
-                disabled={!hasVideo}
+                onClick={togglePlay} disabled={!hasVideo}
                 style={{
                   width: '48px', height: '48px', borderRadius: '14px',
                   border: '3px solid black',
                   background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #E2F0D9`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   cursor: hasVideo ? 'pointer' : 'not-allowed',
-                  boxShadow: '3px 3px 0 0 black',
-                  opacity: hasVideo ? 1 : 0.5,
-                  flexShrink: 0,
+                  boxShadow: '3px 3px 0 0 black', opacity: hasVideo ? 1 : 0.5, flexShrink: 0,
                 }}
               >
-                {isPlaying ? (
-                  <Pause className="size-5" strokeWidth={3} style={{ color: '#000', fill: '#000' }} />
-                ) : (
-                  <Play className="size-5" strokeWidth={3} style={{ color: '#000', fill: '#000', marginLeft: '2px' }} />
-                )}
+                {isPlaying
+                  ? <Pause className="size-5" strokeWidth={3} style={{ color: '#000', fill: '#000' }} />
+                  : <Play className="size-5" strokeWidth={3} style={{ color: '#000', fill: '#000', marginLeft: '2px' }} />
+                }
               </button>
-
               <div style={{
-                flex: 1, textAlign: 'center',
-                fontSize: '14px', fontWeight: 900, color: '#000',
-                fontVariantNumeric: 'tabular-nums',
+                flex: 1, textAlign: 'center', fontSize: '14px', fontWeight: 900,
+                color: '#000', fontVariantNumeric: 'tabular-nums',
               }}>
                 {fmt(displayedTime)} / {fmt(duration)}
               </div>
-
               {isDJ ? (
                 <span style={{
                   display: 'inline-flex', alignItems: 'center', gap: '4px',
@@ -1407,42 +1240,33 @@ export default function WatchPage() {
                   <Crown className="size-3" strokeWidth={3} /> DJ
                 </span>
               ) : (
-                <button
-                  onClick={takeWheel}
+                <button onClick={takeWheel}
                   style={{
                     padding: '8px 14px', border: '2px solid black', borderRadius: '999px',
                     background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #FFF5BA`,
                     fontSize: '10px', fontWeight: 900, color: '#000',
                     boxShadow: '2px 2px 0 0 black', cursor: 'pointer', flexShrink: 0,
-                  }}
-                >
-                  ✋ take the wheel
-                </button>
+                  }}>✋ take the wheel</button>
               )}
             </div>
           </div>
 
-          {/* SOURCE PICKER (DJ only) */}
           {isDJ && (
-            <div
-              className="border-4 border-black shrink-0"
+            <div className="border-4 border-black shrink-0"
               style={{
                 borderRadius: '18px',
                 background: `linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%), #FFF5BA`,
                 padding: '12px', boxShadow: '4px 4px 0 0 black',
                 display: 'flex', flexDirection: 'column', gap: '10px',
-              }}
-            >
+              }}>
               <p style={{
                 margin: 0, fontSize: '10px', fontWeight: 900,
                 textTransform: 'uppercase', letterSpacing: '0.1em',
                 color: 'rgba(0,0,0,0.55)',
               }}>play something</p>
-
               <div style={{ display: 'flex', gap: '8px' }}>
                 <div style={{
-                  flex: 1, minWidth: 0,
-                  display: 'flex', alignItems: 'center', gap: '8px',
+                  flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '8px',
                   border: '2px solid black', borderRadius: '12px',
                   background: '#FFFDF5', padding: '0 12px',
                 }}>
@@ -1465,9 +1289,7 @@ export default function WatchPage() {
                     onKeyDown={(e) => { if (e.key === 'Enter') startYouTube(); }}
                   />
                 </div>
-                <button
-                  onClick={startYouTube}
-                  disabled={!ytUrl.trim()}
+                <button onClick={startYouTube} disabled={!ytUrl.trim()}
                   style={{
                     padding: '10px 16px', border: '2px solid black', borderRadius: '12px',
                     background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #E2F0D9`,
@@ -1475,22 +1297,11 @@ export default function WatchPage() {
                     boxShadow: '2px 2px 0 0 black',
                     cursor: ytUrl.trim() ? 'pointer' : 'not-allowed',
                     opacity: ytUrl.trim() ? 1 : 0.5, flexShrink: 0,
-                  }}
-                >play</button>
+                  }}>play</button>
               </div>
               {ytError && (
                 <p style={{ margin: 0, fontSize: '11px', fontWeight: 800, color: '#C2185B' }}>⚠️ {ytError}</p>
               )}
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{ flex: 1, height: '2px', background: 'rgba(0,0,0,0.15)' }} />
-                <span style={{
-                  fontSize: '10px', fontWeight: 900, color: 'rgba(0,0,0,0.4)',
-                  textTransform: 'uppercase', letterSpacing: '0.08em',
-                }}>or</span>
-                <div style={{ flex: 1, height: '2px', background: 'rgba(0,0,0,0.15)' }} />
-              </div>
-
               <button
                 onClick={() => fileInputRef.current?.click()}
                 style={{
@@ -1514,19 +1325,15 @@ export default function WatchPage() {
             </div>
           )}
 
-          {/* CHAT PANEL */}
           {chatOpen && (
-            <div
-              className="border-4 border-black shrink-0"
+            <div className="border-4 border-black shrink-0"
               style={{
                 borderRadius: '18px',
                 background: `linear-gradient(180deg, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0) 55%), #FFFDF5`,
                 boxShadow: '4px 4px 0 0 black',
                 display: 'flex', flexDirection: 'column',
-                minHeight: '260px', maxHeight: '360px',
-                overflow: 'hidden',
-              }}
-            >
+                minHeight: '260px', maxHeight: '360px', overflow: 'hidden',
+              }}>
               <div style={{
                 padding: '10px 14px', borderBottom: '3px solid black',
                 background: '#E6E6FA',
@@ -1538,8 +1345,7 @@ export default function WatchPage() {
                 </p>
               </div>
               <div
-                ref={chatScrollRef}
-                onScroll={handleChatScroll}
+                ref={chatScrollRef} onScroll={handleChatScroll}
                 style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '10px 14px' }}
               >
                 {messages.length === 0 ? (
@@ -1557,24 +1363,17 @@ export default function WatchPage() {
                         justifyContent: mine ? 'flex-end' : 'flex-start',
                       }}>
                         <div style={{
-                          maxWidth: '78%',
-                          border: '2px solid black',
+                          maxWidth: '78%', border: '2px solid black',
                           borderRadius: mine ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
                           background: mine ? '#E2F0D9' : '#FFD1DC',
-                          padding: '6px 10px',
-                          boxShadow: '2px 2px 0 0 black',
+                          padding: '6px 10px', boxShadow: '2px 2px 0 0 black',
                         }}>
                           <p style={{
                             margin: 0, fontSize: '9px', fontWeight: 900,
                             textTransform: 'uppercase', letterSpacing: '0.06em',
                             color: 'rgba(0,0,0,0.55)',
-                          }}>
-                            {name} · {time}
-                          </p>
-                          <p style={{
-                            margin: '2px 0 0', fontSize: '13px', color: '#000',
-                            lineHeight: 1.35, wordBreak: 'break-word',
-                          }}>
+                          }}>{name} · {time}</p>
+                          <p style={{ margin: '2px 0 0', fontSize: '13px', color: '#000', lineHeight: 1.35, wordBreak: 'break-word' }}>
                             {m.content}
                           </p>
                         </div>
@@ -1584,31 +1383,21 @@ export default function WatchPage() {
                 )}
                 <div ref={chatBottomRef} style={{ height: '2px' }} />
               </div>
-              <form
-                onSubmit={sendChat}
-                style={{
-                  borderTop: '3px solid black',
-                  background: '#E6E6FA',
-                  display: 'flex', alignItems: 'stretch',
-                  padding: '10px', gap: '8px',
-                }}
-              >
+              <form onSubmit={sendChat} style={{
+                borderTop: '3px solid black', background: '#E6E6FA',
+                display: 'flex', alignItems: 'stretch', padding: '10px', gap: '8px',
+              }}>
                 <input
-                  type="text"
-                  value={chatInput}
+                  type="text" value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
                   placeholder="say something..."
                   style={{
-                    flex: 1, minWidth: 0,
-                    border: '2px solid black', borderRadius: '12px',
-                    background: '#FFFDF5', color: '#000',
-                    fontSize: '13px', padding: '10px 12px',
-                    outline: 'none', fontWeight: 600,
+                    flex: 1, minWidth: 0, border: '2px solid black', borderRadius: '12px',
+                    background: '#FFFDF5', color: '#000', fontSize: '13px',
+                    padding: '10px 12px', outline: 'none', fontWeight: 600,
                   }}
                 />
-                <button
-                  type="submit"
-                  disabled={!chatInput.trim()}
+                <button type="submit" disabled={!chatInput.trim()}
                   style={{
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                     padding: '10px 14px', border: '2px solid black', borderRadius: '12px',
@@ -1616,32 +1405,27 @@ export default function WatchPage() {
                     color: '#000', fontWeight: 900, fontSize: '12px',
                     boxShadow: '3px 3px 0 0 black',
                     cursor: chatInput.trim() ? 'pointer' : 'not-allowed',
-                    opacity: chatInput.trim() ? 1 : 0.5,
-                    flexShrink: 0, minWidth: '48px',
-                  }}
-                >
+                    opacity: chatInput.trim() ? 1 : 0.5, flexShrink: 0, minWidth: '48px',
+                  }}>
                   <Send className="size-4" strokeWidth={2.75} />
                 </button>
               </form>
             </div>
           )}
 
-          {/* FOOTER */}
           <div className="flex items-center justify-between gap-2 shrink-0">
             <p style={{ margin: 0, fontSize: '10px', fontWeight: 800, color: 'rgba(255,255,255,0.55)' }}>
               {room?.dj_email && !isDJ ? `🎙️ DJ: ${room.dj_email.split('@')[0]}` : ' '}
             </p>
             {(isDJ || room?.dj_user_id) && (
-              <button
-                onClick={leaveRoom}
+              <button onClick={leaveRoom}
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: '6px',
                   padding: '8px 12px', border: '2px solid black', borderRadius: '999px',
                   background: '#FFD1DC', color: '#C2185B',
                   fontWeight: 900, fontSize: '11px',
                   boxShadow: '2px 2px 0 0 black', cursor: 'pointer',
-                }}
-              >
+                }}>
                 <LogOut className="size-3" strokeWidth={3} />
                 {isDJ ? 'end session' : 'leave'}
               </button>
@@ -1653,43 +1437,27 @@ export default function WatchPage() {
   );
 }
 
-// Compact voice chip used only in immersive overlay
 function ImmersiveVoiceChip({
   email, speaking, mine, muted, color,
 }: {
-  email: string;
-  speaking: boolean;
-  mine?: boolean;
-  muted?: boolean;
-  color: string;
+  email: string; speaking: boolean; mine?: boolean; muted?: boolean; color: string;
 }) {
   return (
-    <span
-      style={{
-        display: 'inline-flex', alignItems: 'center', gap: '6px',
-        padding: '3px 10px 3px 3px',
-        border: '2px solid #FFF',
-        borderRadius: '999px',
-        background: speaking
-          ? 'rgba(127,229,165,0.9)'
-          : 'rgba(0,0,0,0.55)',
-        color: speaking ? '#000' : '#FFF',
-        fontSize: '11px', fontWeight: 900,
-        transition: 'background 0.15s',
-      }}
-    >
-      <span
-        style={{
-          width: '22px', height: '22px', borderRadius: '999px',
-          border: '2px solid #000',
-          background: color,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '9px', fontWeight: 900, color: '#000',
-          flexShrink: 0,
-        }}
-      >
-        {initialsFor(email, null)}
-      </span>
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: '6px',
+      padding: '3px 10px 3px 3px',
+      border: '2px solid #FFF', borderRadius: '999px',
+      background: speaking ? 'rgba(127,229,165,0.9)' : 'rgba(0,0,0,0.55)',
+      color: speaking ? '#000' : '#FFF',
+      fontSize: '11px', fontWeight: 900,
+      transition: 'background 0.15s',
+    }}>
+      <span style={{
+        width: '22px', height: '22px', borderRadius: '999px',
+        border: '2px solid #000', background: color,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: '9px', fontWeight: 900, color: '#000', flexShrink: 0,
+      }}>{initialsFor(email, null)}</span>
       <span style={{ maxWidth: '70px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {mine ? 'you' : email.split('@')[0]}
       </span>

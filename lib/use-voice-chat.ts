@@ -11,7 +11,7 @@ type Participant = {
   connected: boolean;
   iceState: string;
   connState: string;
-  audioLevel: number; // 0-100
+  audioLevel: number;
 };
 
 const ICE_SERVERS: RTCIceServer[] = [
@@ -43,12 +43,10 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState('');
   const [debug, setDebug] = useState<string>('booting…');
-  const [ctxState, setCtxState] = useState<string>('suspended');
 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
-  const masterGainRef = useRef<GainNode | null>(null);
 
   const peersRef = useRef<
     Map<
@@ -56,12 +54,12 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       {
         pc: RTCPeerConnection;
         pendingIce: RTCIceCandidateInit[];
+        audioEl: HTMLAudioElement | null;
+        analyser: AnalyserNode | null;
         sourceNode: MediaStreamAudioSourceNode | null;
-        gainNode: GainNode | null;
         retries: number;
         isInitiator: boolean;
         peerEmail: string;
-        analyser: AnalyserNode | null;
       }
     >
   >(new Map());
@@ -74,33 +72,26 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
     setDebug(msg);
   }, []);
 
-  // -------- Init AudioContext on first user gesture --------
   const ensureAudioCtx = useCallback(() => {
     try {
       if (!audioCtxRef.current) {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        audioCtxRef.current = ctx;
-        const gain = ctx.createGain();
-        gain.gain.value = 1;
-        gain.connect(ctx.destination);
-        masterGainRef.current = gain;
+        const Ctor = (window.AudioContext || (window as any).webkitAudioContext);
+        if (!Ctor) return;
+        audioCtxRef.current = new Ctor();
       }
       const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') {
-        ctx.resume().then(() => {
-          setCtxState(ctx.state);
-        }).catch(() => {});
-      } else {
-        setCtxState(ctx.state);
-      }
-    } catch (err) {
-      console.error('[voice] audioCtx init failed', err);
-    }
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    } catch {}
   }, []);
 
   useEffect(() => {
     function unlock() {
       ensureAudioCtx();
+      peersRef.current.forEach((p) => {
+        if (p.audioEl && p.audioEl.paused) {
+          p.audioEl.play().catch(() => {});
+        }
+      });
     }
     window.addEventListener('pointerdown', unlock);
     window.addEventListener('keydown', unlock);
@@ -112,23 +103,22 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
     };
   }, [ensureAudioCtx]);
 
-  // -------- Close peer --------
   const closePeer = useCallback((peerId: string) => {
     const peer = peersRef.current.get(peerId);
     if (!peer) return;
     try { peer.pc.close(); } catch {}
     try { peer.sourceNode?.disconnect(); } catch {}
-    try { peer.gainNode?.disconnect(); } catch {}
+    if (peer.audioEl) {
+      try { peer.audioEl.pause(); } catch {}
+      try { peer.audioEl.remove(); } catch {}
+    }
     peersRef.current.delete(peerId);
     setParticipants((prev) => prev.filter((p) => p.id !== peerId));
   }, []);
 
-  // -------- Create peer --------
   const createPeer = useCallback(
     (peerId: string, peerEmail: string, initiator: boolean) => {
-      if (!userId || !email || !localStreamRef.current || !channelRef.current) {
-        return null;
-      }
+      if (!userId || !email || !localStreamRef.current || !channelRef.current) return null;
       const existing = peersRef.current.get(peerId);
       if (existing) return existing;
 
@@ -138,7 +128,6 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
         iceServers: ICE_SERVERS,
         iceCandidatePoolSize: 10,
         bundlePolicy: 'max-bundle',
-        rtcpMuxPolicy: 'require',
       });
 
       localStreamRef.current.getTracks().forEach((track) => {
@@ -148,12 +137,12 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       const peer = {
         pc,
         pendingIce: [] as RTCIceCandidateInit[],
+        audioEl: null as HTMLAudioElement | null,
+        analyser: null as AnalyserNode | null,
         sourceNode: null as MediaStreamAudioSourceNode | null,
-        gainNode: null as GainNode | null,
         retries: 0,
         isInitiator: initiator,
         peerEmail,
-        analyser: null as AnalyserNode | null,
       };
       peersRef.current.set(peerId, peer);
 
@@ -161,41 +150,45 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
         log(`✓ audio from ${peerEmail.split('@')[0]}`);
         const stream = e.streams[0] || new MediaStream([e.track]);
 
-        // Route through Web Audio API for reliable playback
-        ensureAudioCtx();
-        const ctx = audioCtxRef.current;
-        const master = masterGainRef.current;
-        if (!ctx || !master) return;
+        // 1. Create an <audio> element — this uses the SAME audio device
+        //    as WhatsApp / YouTube / everything else (default output device).
+        const audioEl = document.createElement('audio');
+        audioEl.autoplay = true;
+        audioEl.setAttribute('playsinline', 'true');
+        audioEl.controls = false;
+        audioEl.volume = mutedPeersRef.current.has(peerId) ? 0 : 1;
+        audioEl.style.display = 'none';
+        audioEl.srcObject = stream;
+        document.body.appendChild(audioEl);
 
+        audioEl.play()
+          .then(() => log(`▶ playing from ${peerEmail.split('@')[0]}`))
+          .catch((err) => {
+            console.warn('[voice] autoplay blocked', err);
+            log(`tap anywhere to hear ${peerEmail.split('@')[0]}`);
+          });
+
+        peer.audioEl = audioEl;
+
+        // 2. Web Audio analyser ONLY for VU meter (not connected to destination)
         try {
-          const source = ctx.createMediaStreamSource(stream);
-          const analyser = ctx.createAnalyser();
-          analyser.fftSize = 512;
-          const gain = ctx.createGain();
-          gain.gain.value = mutedPeersRef.current.has(peerId) ? 0 : 1;
-
-          // source -> analyser -> gain -> master -> speakers
-          source.connect(analyser);
-          analyser.connect(gain);
-          gain.connect(master);
-
-          peer.sourceNode = source;
-          peer.gainNode = gain;
-          peer.analyser = analyser;
-
-          log(`▶ playing audio from ${peerEmail.split('@')[0]}`);
+          ensureAudioCtx();
+          const ctx = audioCtxRef.current;
+          if (ctx) {
+            const source = ctx.createMediaStreamSource(stream);
+            const analyser = ctx.createAnalyser();
+            analyser.fftSize = 512;
+            source.connect(analyser); // analyser only — NOT to ctx.destination
+            peer.analyser = analyser;
+            peer.sourceNode = source;
+          }
         } catch (err) {
-          console.error('[voice] routing failed', err);
-          log('routing failed — see console');
+          console.error('[voice] analyser failed', err);
         }
 
         setParticipants((prev) =>
           prev.some((p) => p.id === peerId)
-            ? prev.map((p) =>
-                p.id === peerId
-                  ? { ...p, hasAudio: true, connected: true }
-                  : p
-              )
+            ? prev.map((p) => (p.id === peerId ? { ...p, hasAudio: true, connected: true } : p))
             : [
                 ...prev,
                 {
@@ -217,20 +210,14 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
           channelRef.current.send({
             type: 'broadcast',
             event: 'ice',
-            payload: {
-              from: userId,
-              to: peerId,
-              candidate: e.candidate.toJSON(),
-            },
+            payload: { from: userId, to: peerId, candidate: e.candidate.toJSON() },
           });
         }
       };
 
       pc.oniceconnectionstatechange = () => {
         setParticipants((prev) =>
-          prev.map((p) =>
-            p.id === peerId ? { ...p, iceState: pc.iceConnectionState } : p
-          )
+          prev.map((p) => (p.id === peerId ? { ...p, iceState: pc.iceConnectionState } : p))
         );
       };
 
@@ -243,6 +230,10 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
         if (st === 'connected') {
           log(`✓ connected to ${peerEmail.split('@')[0]}`);
           peer.retries = 0;
+          // Retry audio play in case it was blocked earlier
+          if (peer.audioEl && peer.audioEl.paused) {
+            peer.audioEl.play().catch(() => {});
+          }
           return;
         }
 
@@ -299,7 +290,6 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
     [userId, email, closePeer, log, ensureAudioCtx]
   );
 
-  // -------- Main setup --------
   useEffect(() => {
     if (!userId || !email) return;
     let cancelled = false;
@@ -308,30 +298,20 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
     async function setup() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
           video: false,
         });
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
+        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
         localStreamRef.current = stream;
         stream.getAudioTracks().forEach((t) => (t.enabled = false));
         setConnected(true);
         log('mic ready — muted until you tap 🎤');
       } catch (err: any) {
         const msg =
-          err?.name === 'NotAllowedError'
-            ? 'mic permission denied'
-            : err?.name === 'NotFoundError'
-            ? 'no microphone found'
-            : err?.name === 'NotReadableError'
-            ? 'mic busy (another tab using it?)'
-            : `mic failed: ${err?.name}`;
+          err?.name === 'NotAllowedError' ? 'mic permission denied'
+          : err?.name === 'NotFoundError' ? 'no microphone found'
+          : err?.name === 'NotReadableError' ? 'mic busy'
+          : `mic failed: ${err?.name}`;
         setError(msg);
         log(`error: ${msg}`);
         return;
@@ -345,14 +325,12 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       ch.on('presence', { event: 'sync' }, () => {
         const state = ch.presenceState();
         const liveIds = Object.keys(state);
-
         liveIds.forEach((id) => {
           if (id === userId) return;
           if (peersRef.current.has(id)) return;
           const meta: any = (state[id] as any)?.[0] ?? {};
           createPeer(id, meta.email ?? 'someone', userId > id);
         });
-
         peersRef.current.forEach((_, id) => {
           if (!liveIds.includes(id)) closePeer(id);
         });
@@ -375,9 +353,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
             event: 'answer',
             payload: { from: userId, to: payload.from, sdp: answer },
           });
-        } catch (err) {
-          console.error('[voice] answer failed', err);
-        }
+        } catch (err) { console.error('[voice] answer failed', err); }
       });
 
       ch.on('broadcast', { event: 'answer' }, async ({ payload }: any) => {
@@ -390,9 +366,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
             try { await peer.pc.addIceCandidate(c); } catch {}
           }
           peer.pendingIce = [];
-        } catch (err) {
-          console.error('[voice] setRemote(answer) failed', err);
-        }
+        } catch (err) { console.error('[voice] setRemote(answer) failed', err); }
       });
 
       ch.on('broadcast', { event: 'ice' }, async ({ payload }: any) => {
@@ -407,9 +381,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       });
 
       ch.subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          await ch.track({ user_id: userId, email });
-        }
+        if (status === 'SUBSCRIBED') await ch.track({ user_id: userId, email });
       });
     }
 
@@ -422,7 +394,10 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       peersRef.current.forEach((p) => {
         try { p.pc.close(); } catch {}
         try { p.sourceNode?.disconnect(); } catch {}
-        try { p.gainNode?.disconnect(); } catch {}
+        if (p.audioEl) {
+          try { p.audioEl.pause(); } catch {}
+          try { p.audioEl.remove(); } catch {}
+        }
       });
       peersRef.current.clear();
       if (channelRef.current) {
@@ -434,12 +409,11 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
     };
   }, [roomId, userId, email, createPeer, closePeer, log]);
 
-  // -------- Audio level meter (both local + remote) --------
+  // Speaking detection
   useEffect(() => {
     const i = setInterval(() => {
       const updates: Record<string, { level: number; speaking: boolean }> = {};
 
-      // local analyser
       if (localStreamRef.current && micOn) {
         const ctx = audioCtxRef.current;
         if (ctx && !localAnalyserRef.current) {
@@ -462,7 +436,6 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
         }
       }
 
-      // remote analysers
       peersRef.current.forEach((peer, id) => {
         const an = peer.analyser;
         if (!an) return;
@@ -485,36 +458,35 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
     return () => clearInterval(i);
   }, [micOn]);
 
-  // -------- Mic toggle --------
   const toggleMic = useCallback(() => {
     if (!localStreamRef.current) return;
     ensureAudioCtx();
     const next = !micOn;
     localStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = next));
     setMicOn(next);
+    // Unlock any audio elements
+    peersRef.current.forEach((p) => {
+      if (p.audioEl && p.audioEl.paused) p.audioEl.play().catch(() => {});
+    });
     log(next ? 'mic ON' : 'mic OFF');
   }, [micOn, log, ensureAudioCtx]);
 
-  // -------- Peer mute (local) --------
   const togglePeerMute = useCallback((peerId: string) => {
     const peer = peersRef.current.get(peerId);
     if (!peer) return;
     const next = !mutedPeersRef.current.has(peerId);
     if (next) mutedPeersRef.current.add(peerId);
     else mutedPeersRef.current.delete(peerId);
-    if (peer.gainNode) {
-      peer.gainNode.gain.value = next ? 0 : 1;
-    }
+    if (peer.audioEl) peer.audioEl.volume = next ? 0 : 1;
     setMutedPeers(new Set(mutedPeersRef.current));
   }, []);
 
-  // -------- Manual retry --------
   const reconnect = useCallback(() => {
     log('retry…');
     Array.from(peersRef.current.entries()).forEach(([id, p]) => {
       try { p.pc.close(); } catch {}
       try { p.sourceNode?.disconnect(); } catch {}
-      try { p.gainNode?.disconnect(); } catch {}
+      if (p.audioEl) { try { p.audioEl.remove(); } catch {} }
       peersRef.current.delete(id);
       setParticipants((prev) => prev.filter((x) => x.id !== id));
     });
@@ -530,7 +502,6 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
     }, 600);
   }, [userId, createPeer, log]);
 
-  // -------- Test tone --------
   const playTestTone = useCallback(() => {
     ensureAudioCtx();
     const ctx = audioCtxRef.current;
@@ -541,23 +512,14 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       osc.frequency.value = 440;
       g.gain.value = 0.15;
       osc.connect(g);
-      g.connect(ctx.destination);
+      g.connect(ctx.destination); // IMPORTANT: test tone goes to actual destination
       osc.start();
       setTimeout(() => { try { osc.stop(); } catch {} }, 400);
     } catch {}
   }, [ensureAudioCtx]);
 
   return {
-    micOn,
-    toggleMic,
-    participants,
-    connected,
-    error,
-    togglePeerMute,
-    mutedPeers,
-    debug,
-    reconnect,
-    playTestTone,
-    ctxState,
+    micOn, toggleMic, participants, connected, error,
+    togglePeerMute, mutedPeers, debug, reconnect, playTestTone,
   };
 }
