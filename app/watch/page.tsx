@@ -211,7 +211,20 @@ export default function WatchPage() {
     }).subscribe(async (s) => { if (s === 'SUBSCRIBED') await ch.track({ user_id: userId, email }); });
     return () => { supabase.removeChannel(ch); };
   }, [userId, email]);
-
+  // DJ keeps room.position_seconds fresh so followers don't drift
+  useEffect(() => {
+    if (!isDJ || !room?.is_playing) return;
+    const i = setInterval(async () => {
+      const p = getPlayer();
+      if (!p) return;
+      const t = p.getCurrentTime();
+      await supabase
+        .from('watch_rooms')
+        .update({ position_seconds: t })
+        .eq('id', 'main');
+    }, 1500);
+    return () => clearInterval(i);
+  }, [isDJ, room?.is_playing, getPlayer]);
   useEffect(() => {
     if (!email) return;
     supabase.from('watch_messages').select('*').order('created_at', { ascending: true }).limit(200)
@@ -293,7 +306,7 @@ export default function WatchPage() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room?.mode, room?.video_id, floating, immersive]);
+}, [room?.mode, room?.video_id]);
 
   useEffect(() => () => { try { ytPlayerRef.current?.destroy(); } catch {} }, []);
 
@@ -339,17 +352,14 @@ export default function WatchPage() {
     const i = setInterval(() => {
       const p = getPlayer();
       if (!p) return;
-      const computed =
-        (room.position_seconds ?? 0) +
-        (room.is_playing && room.started_at
-          ? (Date.now() - new Date(room.started_at).getTime()) / 1000
-          : 0);
-      const drift = Math.abs(p.getCurrentTime() - computed);
-      const threshold = room.is_playing ? 1.5 : 0.3;
-      if (drift > threshold) { try { p.seekTo(computed); } catch {} }
+      // Position-only sync — no timestamps, no clock drift
+      const target = room.position_seconds ?? 0;
+      const drift = Math.abs(p.getCurrentTime() - target);
+      const threshold = room.is_playing ? 1.2 : 0.3;
+      if (drift > threshold) { try { p.seekTo(target); } catch {} }
       if (room.is_playing && !p.isPlaying()) { try { p.play(); } catch {} }
       else if (!room.is_playing && p.isPlaying()) { try { p.pause(); } catch {} }
-    }, 800);
+    }, 400);
     return () => clearInterval(i);
   }, [room, isDJ, getPlayer]);
 

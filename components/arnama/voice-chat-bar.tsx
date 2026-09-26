@@ -13,6 +13,7 @@ type Participant = {
   connState: string;
   audioLevel: number;
   audioState: string;
+  trackState: string;
 };
 
 type Props = {
@@ -161,6 +162,7 @@ export function VoiceChatBar({
                   color={AVATAR_COLORS[0]}
                   audioLevel={0}
                   audioState="mic"
+                  trackState={micOn ? 'live' : 'muted'}
                 />
               )}
               {participants.map((p, i) => (
@@ -176,6 +178,7 @@ export function VoiceChatBar({
                   hasAudio={p.hasAudio}
                   audioLevel={p.audioLevel}
                   audioState={p.audioState}
+                  trackState={p.trackState}
                 />
               ))}
             </>
@@ -260,6 +263,7 @@ function ParticipantChip({
   hasAudio,
   audioLevel,
   audioState,
+  trackState,
 }: {
   email: string;
   speaking: boolean;
@@ -272,6 +276,7 @@ function ParticipantChip({
   hasAudio?: boolean;
   audioLevel: number;
   audioState?: string;
+  trackState?: string;
 }) {
   const initials = initialsFor(email, null);
   const name = mine ? 'you' : email.split('@')[0];
@@ -358,7 +363,7 @@ function ParticipantChip({
         {name}
       </span>
 
-      {/* audio state debug badge */}
+      {/* audio element state badge */}
       {!mine && (
         <span
           style={{
@@ -377,6 +382,28 @@ function ParticipantChip({
           }}
         >
           {audioState || '—'}
+        </span>
+      )}
+
+      {/* remote track state badge */}
+      {!mine && (
+        <span
+          style={{
+            fontSize: '8px',
+            fontWeight: 900,
+            fontFamily: 'ui-monospace, monospace',
+            letterSpacing: '-0.02em',
+            color:
+              trackState === 'live'
+                ? '#3A7A5E'
+                : trackState === 'muted'
+                ? '#C2185B'
+                : trackState === 'ended'
+                ? '#C2185B'
+                : 'rgba(0,0,0,0.4)',
+          }}
+        >
+          {trackState || '—'}
         </span>
       )}
 
