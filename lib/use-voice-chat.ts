@@ -12,6 +12,7 @@ type Participant = {
   iceState: string;
   connState: string;
   audioLevel: number;
+  audioState: string; // debug: 'playing' | 'paused' | 'no-el' | 'error'
 };
 
 const ICE_SERVERS: RTCIceServer[] = [
@@ -89,7 +90,11 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       ensureAudioCtx();
       peersRef.current.forEach((p) => {
         if (p.audioEl && p.audioEl.paused) {
-          p.audioEl.play().catch(() => {});
+          p.audioEl.play().then(() => {
+            log(`unlocked playback for ${p.peerEmail.split('@')[0]}`);
+          }).catch((err) => {
+            log(`unlock blocked: ${err?.name}`);
+          });
         }
       });
     }
@@ -101,7 +106,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       window.removeEventListener('keydown', unlock);
       window.removeEventListener('touchstart', unlock);
     };
-  }, [ensureAudioCtx]);
+  }, [ensureAudioCtx, log]);
 
   const closePeer = useCallback((peerId: string) => {
     const peer = peersRef.current.get(peerId);
@@ -147,30 +152,43 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       peersRef.current.set(peerId, peer);
 
       pc.ontrack = (e) => {
-        log(`✓ audio from ${peerEmail.split('@')[0]}`);
+        log(`✓ track from ${peerEmail.split('@')[0]}`);
         const stream = e.streams[0] || new MediaStream([e.track]);
 
-        // 1. Create an <audio> element — this uses the SAME audio device
-        //    as WhatsApp / YouTube / everything else (default output device).
+        // <audio> element with visible controls for debugging.
+        // Once confirmed working, we'll hide them.
         const audioEl = document.createElement('audio');
         audioEl.autoplay = true;
         audioEl.setAttribute('playsinline', 'true');
-        audioEl.controls = false;
+        audioEl.controls = true;
+        audioEl.style.position = 'fixed';
+        audioEl.style.bottom = '130px';
+        audioEl.style.left = '20px';
+        audioEl.style.zIndex = '99999';
+        audioEl.style.width = '220px';
         audioEl.volume = mutedPeersRef.current.has(peerId) ? 0 : 1;
-        audioEl.style.display = 'none';
         audioEl.srcObject = stream;
+
+        // Verbose logging
+        audioEl.addEventListener('play', () => log(`▶ playing ${peerEmail.split('@')[0]}`));
+        audioEl.addEventListener('pause', () => log(`⏸ paused ${peerEmail.split('@')[0]}`));
+        audioEl.addEventListener('error', () => log(`✗ error ${peerEmail.split('@')[0]}`));
+        audioEl.addEventListener('volumechange', () => {
+          log(`vol ${peerEmail.split('@')[0]} = ${audioEl.volume}`);
+        });
+
         document.body.appendChild(audioEl);
 
         audioEl.play()
-          .then(() => log(`▶ playing from ${peerEmail.split('@')[0]}`))
+          .then(() => log(`▶▶ auto-play OK for ${peerEmail.split('@')[0]}`))
           .catch((err) => {
             console.warn('[voice] autoplay blocked', err);
-            log(`tap anywhere to hear ${peerEmail.split('@')[0]}`);
+            log(`autoplay blocked: ${err?.name} — tap anywhere`);
           });
 
         peer.audioEl = audioEl;
 
-        // 2. Web Audio analyser ONLY for VU meter (not connected to destination)
+        // VU analyser only
         try {
           ensureAudioCtx();
           const ctx = audioCtxRef.current;
@@ -178,13 +196,11 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
             const source = ctx.createMediaStreamSource(stream);
             const analyser = ctx.createAnalyser();
             analyser.fftSize = 512;
-            source.connect(analyser); // analyser only — NOT to ctx.destination
+            source.connect(analyser); // analyser only, NOT connected to destination
             peer.analyser = analyser;
             peer.sourceNode = source;
           }
-        } catch (err) {
-          console.error('[voice] analyser failed', err);
-        }
+        } catch {}
 
         setParticipants((prev) =>
           prev.some((p) => p.id === peerId)
@@ -192,14 +208,9 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
             : [
                 ...prev,
                 {
-                  id: peerId,
-                  email: peerEmail,
-                  speaking: false,
-                  hasAudio: true,
-                  connected: true,
-                  iceState: pc.iceConnectionState,
-                  connState: pc.connectionState,
-                  audioLevel: 0,
+                  id: peerId, email: peerEmail, speaking: false, hasAudio: true,
+                  connected: true, iceState: pc.iceConnectionState,
+                  connState: pc.connectionState, audioLevel: 0, audioState: 'playing',
                 },
               ]
         );
@@ -208,8 +219,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       pc.onicecandidate = (e) => {
         if (e.candidate && channelRef.current) {
           channelRef.current.send({
-            type: 'broadcast',
-            event: 'ice',
+            type: 'broadcast', event: 'ice',
             payload: { from: userId, to: peerId, candidate: e.candidate.toJSON() },
           });
         }
@@ -230,17 +240,15 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
         if (st === 'connected') {
           log(`✓ connected to ${peerEmail.split('@')[0]}`);
           peer.retries = 0;
-          // Retry audio play in case it was blocked earlier
           if (peer.audioEl && peer.audioEl.paused) {
             peer.audioEl.play().catch(() => {});
           }
           return;
         }
-
         if (st === 'failed') {
           if (peer.retries < MAX_RETRIES) {
             peer.retries++;
-            log(`retry ${peer.retries}/${MAX_RETRIES} → ${peerEmail.split('@')[0]}`);
+            log(`retry ${peer.retries}/${MAX_RETRIES}`);
             setTimeout(() => {
               closePeer(peerId);
               setTimeout(() => createPeer(peerId, peerEmail, initiator), 800);
@@ -257,14 +265,9 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
           : [
               ...prev,
               {
-                id: peerId,
-                email: peerEmail,
-                speaking: false,
-                hasAudio: false,
-                connected: false,
-                iceState: pc.iceConnectionState,
-                connState: pc.connectionState,
-                audioLevel: 0,
+                id: peerId, email: peerEmail, speaking: false, hasAudio: false,
+                connected: false, iceState: pc.iceConnectionState,
+                connState: pc.connectionState, audioLevel: 0, audioState: 'no-el',
               },
             ]
       );
@@ -275,13 +278,10 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             channelRef.current?.send({
-              type: 'broadcast',
-              event: 'offer',
+              type: 'broadcast', event: 'offer',
               payload: { from: userId, to: peerId, sdp: offer },
             });
-          } catch (err) {
-            console.error('[voice] offer failed', err);
-          }
+          } catch (err) { console.error('[voice] offer failed', err); }
         }, 400);
       }
 
@@ -312,9 +312,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
           : err?.name === 'NotFoundError' ? 'no microphone found'
           : err?.name === 'NotReadableError' ? 'mic busy'
           : `mic failed: ${err?.name}`;
-        setError(msg);
-        log(`error: ${msg}`);
-        return;
+        setError(msg); log(`error: ${msg}`); return;
       }
 
       const ch = supabase.channel(`voice-${roomId}`, {
@@ -342,15 +340,12 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
         if (!peer) return;
         try {
           await peer.pc.setRemoteDescription(payload.sdp);
-          for (const c of peer.pendingIce) {
-            try { await peer.pc.addIceCandidate(c); } catch {}
-          }
+          for (const c of peer.pendingIce) { try { await peer.pc.addIceCandidate(c); } catch {} }
           peer.pendingIce = [];
           const answer = await peer.pc.createAnswer();
           await peer.pc.setLocalDescription(answer);
           ch.send({
-            type: 'broadcast',
-            event: 'answer',
+            type: 'broadcast', event: 'answer',
             payload: { from: userId, to: payload.from, sdp: answer },
           });
         } catch (err) { console.error('[voice] answer failed', err); }
@@ -362,9 +357,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
         if (!peer) return;
         try {
           await peer.pc.setRemoteDescription(payload.sdp);
-          for (const c of peer.pendingIce) {
-            try { await peer.pc.addIceCandidate(c); } catch {}
-          }
+          for (const c of peer.pendingIce) { try { await peer.pc.addIceCandidate(c); } catch {} }
           peer.pendingIce = [];
         } catch (err) { console.error('[voice] setRemote(answer) failed', err); }
       });
@@ -394,10 +387,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       peersRef.current.forEach((p) => {
         try { p.pc.close(); } catch {}
         try { p.sourceNode?.disconnect(); } catch {}
-        if (p.audioEl) {
-          try { p.audioEl.pause(); } catch {}
-          try { p.audioEl.remove(); } catch {}
-        }
+        if (p.audioEl) { try { p.audioEl.remove(); } catch {} }
       });
       peersRef.current.clear();
       if (channelRef.current) {
@@ -409,10 +399,10 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
     };
   }, [roomId, userId, email, createPeer, closePeer, log]);
 
-  // Speaking detection
+  // VU meter + audio state poll
   useEffect(() => {
     const i = setInterval(() => {
-      const updates: Record<string, { level: number; speaking: boolean }> = {};
+      const updates: Record<string, { level: number; speaking: boolean; audioState: string }> = {};
 
       if (localStreamRef.current && micOn) {
         const ctx = audioCtxRef.current;
@@ -432,7 +422,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
           let sum = 0;
           for (let i = 0; i < data.length; i++) sum += data[i];
           const level = Math.min(100, (sum / data.length) * 2);
-          updates['me'] = { level, speaking: level > 15 };
+          updates['me'] = { level, speaking: level > 15, audioState: 'mic' };
         }
       }
 
@@ -444,7 +434,16 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
         let sum = 0;
         for (let i = 0; i < data.length; i++) sum += data[i];
         const level = Math.min(100, (sum / data.length) * 2);
-        updates[id] = { level, speaking: level > 15 };
+
+        const el = peer.audioEl;
+        let astate = 'no-el';
+        if (el) {
+          if (el.error) astate = 'error';
+          else if (el.paused) astate = 'paused';
+          else astate = 'playing';
+        }
+
+        updates[id] = { level, speaking: level > 15, audioState: astate };
       });
 
       setParticipants((prev) =>
@@ -452,9 +451,10 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
           ...p,
           audioLevel: updates[p.id]?.level ?? 0,
           speaking: updates[p.id]?.speaking ?? false,
+          audioState: updates[p.id]?.audioState ?? p.audioState,
         }))
       );
-    }, 120);
+    }, 200);
     return () => clearInterval(i);
   }, [micOn]);
 
@@ -464,20 +464,24 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
     const next = !micOn;
     localStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = next));
     setMicOn(next);
-    // Unlock any audio elements
+    // Force-resume any audio elements on the same user gesture
     peersRef.current.forEach((p) => {
-      if (p.audioEl && p.audioEl.paused) p.audioEl.play().catch(() => {});
+      if (p.audioEl && p.audioEl.paused) {
+        p.audioEl.play().catch((err) => {
+          log(`play blocked: ${err?.name}`);
+        });
+      }
     });
     log(next ? 'mic ON' : 'mic OFF');
   }, [micOn, log, ensureAudioCtx]);
 
   const togglePeerMute = useCallback((peerId: string) => {
     const peer = peersRef.current.get(peerId);
-    if (!peer) return;
+    if (!peer || !peer.audioEl) return;
     const next = !mutedPeersRef.current.has(peerId);
     if (next) mutedPeersRef.current.add(peerId);
     else mutedPeersRef.current.delete(peerId);
-    if (peer.audioEl) peer.audioEl.volume = next ? 0 : 1;
+    peer.audioEl.volume = next ? 0 : 1;
     setMutedPeers(new Set(mutedPeersRef.current));
   }, []);
 
@@ -512,7 +516,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       osc.frequency.value = 440;
       g.gain.value = 0.15;
       osc.connect(g);
-      g.connect(ctx.destination); // IMPORTANT: test tone goes to actual destination
+      g.connect(ctx.destination);
       osc.start();
       setTimeout(() => { try { osc.stop(); } catch {} }, 400);
     } catch {}

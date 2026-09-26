@@ -148,7 +148,6 @@ export default function WatchPage() {
     }
   }, [floating, videoPos]);
 
-  // ESC exit immersive
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape' && immersive) setImmersive(false);
@@ -157,7 +156,6 @@ export default function WatchPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [immersive]);
 
-  // Auto-hide controls
   useEffect(() => {
     if (!immersive) { setControlsVisible(true); return; }
     function poke() {
@@ -254,20 +252,24 @@ export default function WatchPage() {
     return () => clearInterval(i);
   }, []);
 
-  // ----- YOUTUBE PLAYER -----
+  // Create YouTube player — depends on room.video_id AND layout mode so it
+  // re-inits cleanly when the container is remounted.
   useEffect(() => {
     if (!room || room.mode !== 'youtube' || !room.video_id) return;
     let cancelled = false;
     (async () => {
       const YT = await loadYT();
       if (cancelled) return;
-      if (ytPlayerRef.current && loadedYtIdRef.current === room.video_id) return;
+
+      // Always destroy any existing player — new container means new player
       try { ytPlayerRef.current?.destroy(); } catch {}
       ytPlayerRef.current = null;
       loadedYtIdRef.current = null;
+
       const container = ytContainerRef.current;
       if (!container) return;
       container.innerHTML = '';
+
       const player = new YT.Player(container, {
         videoId: room.video_id,
         playerVars: { controls: 0, disablekb: 1, modestbranding: 1, rel: 0, playsinline: 1 },
@@ -290,7 +292,8 @@ export default function WatchPage() {
       });
     })();
     return () => { cancelled = true; };
-  }, [room?.mode, room?.video_id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.mode, room?.video_id, floating, immersive]);
 
   useEffect(() => () => { try { ytPlayerRef.current?.destroy(); } catch {} }, []);
 
@@ -582,39 +585,11 @@ export default function WatchPage() {
   const showEmpty = !room?.video_id && !room?.local_hint;
   const hasVideo = showYTPlayer || showLocalPlayer;
 
-  // =============================================================
-  // VIDEO CONTAINER — SINGLE PLACE — REPOSITIONED VIA STYLE ONLY
-  // =============================================================
-  let videoWrapStyle: React.CSSProperties;
-  if (immersive) {
-    videoWrapStyle = {
-      position: 'fixed', inset: 0, zIndex: 9998,
-      background: '#000', overflow: 'hidden',
-    };
-  } else if (floating && videoPos) {
-    videoWrapStyle = {
-      position: 'fixed',
-      left: videoPos.x, top: videoPos.y,
-      width: videoPos.w, height: videoPos.h,
-      zIndex: 800,
-      borderRadius: '18px',
-      border: '4px solid black',
-      boxShadow: '6px 6px 0 0 black',
-      overflow: 'hidden',
-      background: '#000',
-    };
-  } else {
-    videoWrapStyle = {
-      position: 'relative',
-      width: '100%',
-      aspectRatio: '16 / 9',
-      borderRadius: '18px',
-      border: '4px solid black',
-      boxShadow: '6px 6px 0 0 black',
-      overflow: 'hidden',
-      background: '#000',
-    };
-  }
+  // ───── VIDEO WRAPPER — SINGLE INSTANCE, positioned by CSS only ─────
+  // docked: in flow (static)          → rendered inside the column
+  // floating: fixed at videoPos       → rendered at top level
+  // immersive: fixed full screen      → rendered at top level
+  const videoVisible = !immersive && !floating; // shows inline in column
 
   const videoInner = (
     <>
@@ -678,12 +653,85 @@ export default function WatchPage() {
           zIndex: 6,
         }}>{f.emoji}</span>
       ))}
+
+      {/* floating mode controls */}
+      {floating && !immersive && (
+        <>
+          <div
+            onPointerDown={startDrag} onPointerMove={onDrag}
+            onPointerUp={endDrag} onPointerCancel={endDrag}
+            style={{
+              position: 'absolute', top: 0, left: 0, right: 0, height: '18px',
+              background: 'rgba(0,0,0,0.65)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: draggingVideo ? 'grabbing' : 'grab',
+              zIndex: 4, touchAction: 'none',
+            }}
+          >
+            <GripHorizontal className="size-3" strokeWidth={3} style={{ color: '#FFF', opacity: 0.7 }} />
+          </div>
+          <button onClick={exitFloating} style={{
+            position: 'absolute', top: '24px', right: '8px', width: '26px', height: '26px',
+            border: '2px solid #FFF', borderRadius: '999px',
+            background: 'rgba(0,0,0,0.6)', color: '#FFF',
+            cursor: 'pointer', zIndex: 5,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}><Minimize2 className="size-3" strokeWidth={3} /></button>
+          <button onClick={enterImmersive} style={{
+            position: 'absolute', top: '24px', right: '40px', width: '26px', height: '26px',
+            border: '2px solid #FFF', borderRadius: '999px',
+            background: 'rgba(0,0,0,0.6)', color: '#FFF',
+            cursor: 'pointer', zIndex: 5,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}><Maximize2 className="size-3" strokeWidth={3} /></button>
+          <div
+            onPointerDown={startResize} onPointerMove={onResize}
+            onPointerUp={endResize} onPointerCancel={endResize}
+            style={{
+              position: 'absolute', bottom: 0, right: 0, width: '24px', height: '24px',
+              background: 'rgba(0,0,0,0.7)', cursor: 'nwse-resize',
+              zIndex: 5, touchAction: 'none',
+              borderTopLeftRadius: '12px',
+              display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end',
+            }}
+          >
+            <span style={{
+              width: '10px', height: '10px',
+              borderRight: '2px solid #FFF', borderBottom: '2px solid #FFF',
+              margin: '0 3px 3px 0', borderRadius: '0 0 4px 0',
+            }} />
+          </div>
+        </>
+      )}
+
+      {/* docked mode — float + full buttons */}
+      {!floating && !immersive && !showEmpty && (
+        <div style={{
+          position: 'absolute', top: '10px', right: '10px',
+          display: 'flex', gap: '6px', zIndex: 5,
+        }}>
+          <button onClick={enterFloating} style={{
+            padding: '6px 10px', border: '2px solid #FFF', borderRadius: '999px',
+            background: 'rgba(0,0,0,0.55)', color: '#FFF',
+            fontSize: '11px', fontWeight: 900, cursor: 'pointer',
+            display: 'inline-flex', alignItems: 'center', gap: '4px',
+          }}>
+            <GripHorizontal className="size-3" strokeWidth={3} /> float
+          </button>
+          <button onClick={enterImmersive} style={{
+            padding: '6px 10px', border: '2px solid #FFF', borderRadius: '999px',
+            background: 'rgba(0,0,0,0.55)', color: '#FFF',
+            fontSize: '11px', fontWeight: 900, cursor: 'pointer',
+            display: 'inline-flex', alignItems: 'center', gap: '4px',
+          }}>
+            <Maximize2 className="size-3" strokeWidth={3} /> full
+          </button>
+        </div>
+      )}
     </>
   );
 
-  // =============================================================
-  // IMMERSIVE CHROME (top bar, bottom bar, chat drawer)
-  // =============================================================
+  // Immersive overlay (chrome only, video renders in place above)
   const immersiveChrome = immersive && mounted ? createPortal(
     <>
       {/* TOP BAR */}
@@ -723,15 +771,11 @@ export default function WatchPage() {
           {!voice.error && (voice.micOn || voice.participants.length > 0) && (
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
               {email && (
-                <ImmersiveVoiceChip
-                  email={email} speaking={voice.micOn} mine muted={!voice.micOn}
-                  color={AVATAR_COLORS[0]}
-                />
+                <ImmersiveVoiceChip email={email} speaking={voice.micOn} mine muted={!voice.micOn} color={AVATAR_COLORS[0]} />
               )}
               {voice.participants.map((p, i) => (
                 <ImmersiveVoiceChip
-                  key={p.id} email={p.email}
-                  speaking={p.speaking}
+                  key={p.id} email={p.email} speaking={p.speaking}
                   muted={voice.mutedPeers.has(p.id)}
                   color={AVATAR_COLORS[(i + 1) % AVATAR_COLORS.length]}
                 />
@@ -739,7 +783,6 @@ export default function WatchPage() {
             </div>
           )}
         </div>
-
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
           <button
             onClick={() => voice.toggleMic()}
@@ -850,18 +893,14 @@ export default function WatchPage() {
           <div style={{ flex: 1 }} />
           <div style={{ display: 'flex', gap: '6px' }}>
             {REACTION_EMOJIS.map((e) => (
-              <button
-                key={e}
-                onClick={() => sendReaction(e)}
-                style={{
-                  width: '42px', height: '42px', borderRadius: '999px',
-                  border: '2px solid rgba(255,255,255,0.7)',
-                  background: 'rgba(0,0,0,0.5)', cursor: 'pointer',
-                  fontSize: '20px', lineHeight: 1,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  padding: 0,
-                }}
-              >{e}</button>
+              <button key={e} onClick={() => sendReaction(e)} style={{
+                width: '42px', height: '42px', borderRadius: '999px',
+                border: '2px solid rgba(255,255,255,0.7)',
+                background: 'rgba(0,0,0,0.5)', cursor: 'pointer',
+                fontSize: '20px', lineHeight: 1,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                padding: 0,
+              }}>{e}</button>
             ))}
           </div>
         </div>
@@ -925,11 +964,9 @@ export default function WatchPage() {
                       background: mine ? '#E2F0D9' : '#FFD1DC',
                       padding: '6px 10px', boxShadow: '2px 2px 0 0 black',
                     }}>
-                      <p style={{
-                        margin: 0, fontSize: '9px', fontWeight: 900,
-                        textTransform: 'uppercase', letterSpacing: '0.06em',
-                        color: 'rgba(0,0,0,0.55)',
-                      }}>{name} · {time}</p>
+                      <p style={{ margin: 0, fontSize: '9px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'rgba(0,0,0,0.55)' }}>
+                        {name} · {time}
+                      </p>
                       <p style={{ margin: '2px 0 0', fontSize: '13px', color: '#000', lineHeight: 1.35, wordBreak: 'break-word' }}>
                         {m.content}
                       </p>
@@ -954,18 +991,15 @@ export default function WatchPage() {
                 padding: '10px 12px', outline: 'none', fontWeight: 600,
               }}
             />
-            <button
-              type="submit" disabled={!chatInput.trim()}
-              style={{
-                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                padding: '10px 14px', border: '2px solid black', borderRadius: '12px',
-                background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #E2F0D9`,
-                color: '#000', fontWeight: 900, fontSize: '12px',
-                boxShadow: '3px 3px 0 0 black',
-                cursor: chatInput.trim() ? 'pointer' : 'not-allowed',
-                opacity: chatInput.trim() ? 1 : 0.5, flexShrink: 0, minWidth: '48px',
-              }}
-            >
+            <button type="submit" disabled={!chatInput.trim()} style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              padding: '10px 14px', border: '2px solid black', borderRadius: '12px',
+              background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #E2F0D9`,
+              color: '#000', fontWeight: 900, fontSize: '12px',
+              boxShadow: '3px 3px 0 0 black',
+              cursor: chatInput.trim() ? 'pointer' : 'not-allowed',
+              opacity: chatInput.trim() ? 1 : 0.5, flexShrink: 0, minWidth: '48px',
+            }}>
               <Send className="size-4" strokeWidth={2.75} />
             </button>
           </form>
@@ -975,122 +1009,49 @@ export default function WatchPage() {
     document.body
   ) : null;
 
+  // Choose video wrapper style
+  let videoWrapStyle: React.CSSProperties;
+  if (immersive) {
+    videoWrapStyle = {
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      zIndex: 9998, background: '#000', overflow: 'hidden',
+    };
+  } else if (floating && videoPos) {
+    videoWrapStyle = {
+      position: 'fixed',
+      left: videoPos.x, top: videoPos.y,
+      width: videoPos.w, height: videoPos.h,
+      zIndex: 800,
+      borderRadius: '18px',
+      border: '4px solid black',
+      boxShadow: '6px 6px 0 0 black',
+      overflow: 'hidden',
+      background: '#000',
+    };
+  } else {
+    videoWrapStyle = {
+      position: 'relative',
+      width: '100%',
+      aspectRatio: '16 / 9',
+      borderRadius: '18px',
+      border: '4px solid black',
+      boxShadow: '6px 6px 0 0 black',
+      overflow: 'hidden',
+      background: '#000',
+      flexShrink: 0,
+    };
+  }
+
   return (
     <div className="fixed inset-0 bg-[#1a0b2e] font-mono flex flex-col overflow-hidden">
-      {/* IMMERSIVE CHROME (bars only, not video) */}
       {immersiveChrome}
 
-      {/* SINGLE VIDEO CONTAINER — never unmounts */}
+      {/* VIDEO — always same tree position, only CSS changes */}
       <div style={videoWrapStyle} onDoubleClick={handleVideoTap}>
         {videoInner}
-
-        {/* floating drag bar */}
-        {floating && !immersive && (
-          <div
-            onPointerDown={startDrag}
-            onPointerMove={onDrag}
-            onPointerUp={endDrag}
-            onPointerCancel={endDrag}
-            style={{
-              position: 'absolute', top: 0, left: 0, right: 0, height: '18px',
-              background: 'rgba(0,0,0,0.65)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              cursor: draggingVideo ? 'grabbing' : 'grab',
-              zIndex: 4, touchAction: 'none',
-            }}
-          >
-            <GripHorizontal className="size-3" strokeWidth={3} style={{ color: '#FFF', opacity: 0.7 }} />
-          </div>
-        )}
-
-        {/* floating dock button */}
-        {floating && !immersive && (
-          <button
-            onClick={exitFloating}
-            style={{
-              position: 'absolute', top: '24px', right: '8px', width: '26px', height: '26px',
-              border: '2px solid #FFF', borderRadius: '999px',
-              background: 'rgba(0,0,0,0.6)', color: '#FFF',
-              cursor: 'pointer', zIndex: 5,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-          >
-            <Minimize2 className="size-3" strokeWidth={3} />
-          </button>
-        )}
-
-        {/* floating fullscreen button */}
-        {floating && !immersive && (
-          <button
-            onClick={enterImmersive}
-            style={{
-              position: 'absolute', top: '24px', right: '40px', width: '26px', height: '26px',
-              border: '2px solid #FFF', borderRadius: '999px',
-              background: 'rgba(0,0,0,0.6)', color: '#FFF',
-              cursor: 'pointer', zIndex: 5,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-          >
-            <Maximize2 className="size-3" strokeWidth={3} />
-          </button>
-        )}
-
-        {/* resize handle */}
-        {floating && !immersive && (
-          <div
-            onPointerDown={startResize}
-            onPointerMove={onResize}
-            onPointerUp={endResize}
-            onPointerCancel={endResize}
-            style={{
-              position: 'absolute', bottom: 0, right: 0, width: '24px', height: '24px',
-              background: 'rgba(0,0,0,0.7)', cursor: 'nwse-resize',
-              zIndex: 5, touchAction: 'none',
-              borderTopLeftRadius: '12px',
-              display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end',
-            }}
-          >
-            <span style={{
-              width: '10px', height: '10px',
-              borderRight: '2px solid #FFF', borderBottom: '2px solid #FFF',
-              margin: '0 3px 3px 0', borderRadius: '0 0 4px 0',
-            }} />
-          </div>
-        )}
-
-        {/* float + full buttons when docked */}
-        {!floating && !immersive && !showEmpty && (
-          <div style={{
-            position: 'absolute', top: '10px', right: '10px',
-            display: 'flex', gap: '6px', zIndex: 5,
-          }}>
-            <button
-              onClick={enterFloating}
-              style={{
-                padding: '6px 10px', border: '2px solid #FFF', borderRadius: '999px',
-                background: 'rgba(0,0,0,0.55)', color: '#FFF',
-                fontSize: '11px', fontWeight: 900, cursor: 'pointer',
-                display: 'inline-flex', alignItems: 'center', gap: '4px',
-              }}
-            >
-              <GripHorizontal className="size-3" strokeWidth={3} /> float
-            </button>
-            <button
-              onClick={enterImmersive}
-              style={{
-                padding: '6px 10px', border: '2px solid #FFF', borderRadius: '999px',
-                background: 'rgba(0,0,0,0.55)', color: '#FFF',
-                fontSize: '11px', fontWeight: 900, cursor: 'pointer',
-                display: 'inline-flex', alignItems: 'center', gap: '4px',
-              }}
-            >
-              <Maximize2 className="size-3" strokeWidth={3} /> full
-            </button>
-          </div>
-        )}
       </div>
 
-      {/* NORMAL LAYOUT (when not immersive) */}
+      {/* NORMAL UI COLUMN — hidden in immersive */}
       {!immersive && (
         <div
           className="mx-auto flex w-full max-w-3xl flex-1 min-h-0 flex-col gap-2 overflow-y-auto"
@@ -1155,20 +1116,16 @@ export default function WatchPage() {
               padding: '10px 12px', boxShadow: '4px 4px 0 0 black',
               display: 'flex', alignItems: 'center', gap: '8px',
             }}>
-            <span style={{
-              fontSize: '10px', fontWeight: 900, color: 'rgba(0,0,0,0.55)',
-              textTransform: 'uppercase', letterSpacing: '0.08em', flexShrink: 0,
-            }}>react</span>
+            <span style={{ fontSize: '10px', fontWeight: 900, color: 'rgba(0,0,0,0.55)', textTransform: 'uppercase', letterSpacing: '0.08em', flexShrink: 0 }}>react</span>
             <div style={{ display: 'flex', gap: '4px', flex: 1, flexWrap: 'wrap' }}>
               {REACTION_EMOJIS.map((e) => (
-                <button key={e} onClick={() => sendReaction(e)}
-                  style={{
-                    width: '40px', height: '40px', border: '2px solid black',
-                    borderRadius: '999px', background: '#FFFDF5', cursor: 'pointer',
-                    fontSize: '20px', lineHeight: 1,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    boxShadow: '2px 2px 0 0 black', padding: 0,
-                  }}>{e}</button>
+                <button key={e} onClick={() => sendReaction(e)} style={{
+                  width: '40px', height: '40px', border: '2px solid black',
+                  borderRadius: '999px', background: '#FFFDF5', cursor: 'pointer',
+                  fontSize: '20px', lineHeight: 1,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  boxShadow: '2px 2px 0 0 black', padding: 0,
+                }}>{e}</button>
               ))}
             </div>
           </div>
@@ -1188,8 +1145,7 @@ export default function WatchPage() {
                 background: 'rgba(0,0,0,0.15)', borderRadius: '999px',
                 border: '2px solid black', position: 'relative',
                 cursor: duration > 0 ? 'pointer' : 'default', touchAction: 'none',
-              }}
-            >
+              }}>
               <div style={{
                 height: '100%', width: `${pct}%`,
                 background: `linear-gradient(180deg, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0) 60%), #7FB89B`,
@@ -1207,26 +1163,20 @@ export default function WatchPage() {
               )}
             </div>
             <div className="flex items-center gap-3 mt-3">
-              <button
-                onClick={togglePlay} disabled={!hasVideo}
-                style={{
-                  width: '48px', height: '48px', borderRadius: '14px',
-                  border: '3px solid black',
-                  background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #E2F0D9`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: hasVideo ? 'pointer' : 'not-allowed',
-                  boxShadow: '3px 3px 0 0 black', opacity: hasVideo ? 1 : 0.5, flexShrink: 0,
-                }}
-              >
+              <button onClick={togglePlay} disabled={!hasVideo} style={{
+                width: '48px', height: '48px', borderRadius: '14px',
+                border: '3px solid black',
+                background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #E2F0D9`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                cursor: hasVideo ? 'pointer' : 'not-allowed',
+                boxShadow: '3px 3px 0 0 black', opacity: hasVideo ? 1 : 0.5, flexShrink: 0,
+              }}>
                 {isPlaying
                   ? <Pause className="size-5" strokeWidth={3} style={{ color: '#000', fill: '#000' }} />
                   : <Play className="size-5" strokeWidth={3} style={{ color: '#000', fill: '#000', marginLeft: '2px' }} />
                 }
               </button>
-              <div style={{
-                flex: 1, textAlign: 'center', fontSize: '14px', fontWeight: 900,
-                color: '#000', fontVariantNumeric: 'tabular-nums',
-              }}>
+              <div style={{ flex: 1, textAlign: 'center', fontSize: '14px', fontWeight: 900, color: '#000', fontVariantNumeric: 'tabular-nums' }}>
                 {fmt(displayedTime)} / {fmt(duration)}
               </div>
               {isDJ ? (
@@ -1240,13 +1190,12 @@ export default function WatchPage() {
                   <Crown className="size-3" strokeWidth={3} /> DJ
                 </span>
               ) : (
-                <button onClick={takeWheel}
-                  style={{
-                    padding: '8px 14px', border: '2px solid black', borderRadius: '999px',
-                    background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #FFF5BA`,
-                    fontSize: '10px', fontWeight: 900, color: '#000',
-                    boxShadow: '2px 2px 0 0 black', cursor: 'pointer', flexShrink: 0,
-                  }}>✋ take the wheel</button>
+                <button onClick={takeWheel} style={{
+                  padding: '8px 14px', border: '2px solid black', borderRadius: '999px',
+                  background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #FFF5BA`,
+                  fontSize: '10px', fontWeight: 900, color: '#000',
+                  boxShadow: '2px 2px 0 0 black', cursor: 'pointer', flexShrink: 0,
+                }}>✋ take the wheel</button>
               )}
             </div>
           </div>
@@ -1259,11 +1208,7 @@ export default function WatchPage() {
                 padding: '12px', boxShadow: '4px 4px 0 0 black',
                 display: 'flex', flexDirection: 'column', gap: '10px',
               }}>
-              <p style={{
-                margin: 0, fontSize: '10px', fontWeight: 900,
-                textTransform: 'uppercase', letterSpacing: '0.1em',
-                color: 'rgba(0,0,0,0.55)',
-              }}>play something</p>
+              <p style={{ margin: 0, fontSize: '10px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'rgba(0,0,0,0.55)' }}>play something</p>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <div style={{
                   flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '8px',
@@ -1289,30 +1234,26 @@ export default function WatchPage() {
                     onKeyDown={(e) => { if (e.key === 'Enter') startYouTube(); }}
                   />
                 </div>
-                <button onClick={startYouTube} disabled={!ytUrl.trim()}
-                  style={{
-                    padding: '10px 16px', border: '2px solid black', borderRadius: '12px',
-                    background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #E2F0D9`,
-                    color: '#000', fontWeight: 900, fontSize: '12px',
-                    boxShadow: '2px 2px 0 0 black',
-                    cursor: ytUrl.trim() ? 'pointer' : 'not-allowed',
-                    opacity: ytUrl.trim() ? 1 : 0.5, flexShrink: 0,
-                  }}>play</button>
+                <button onClick={startYouTube} disabled={!ytUrl.trim()} style={{
+                  padding: '10px 16px', border: '2px solid black', borderRadius: '12px',
+                  background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #E2F0D9`,
+                  color: '#000', fontWeight: 900, fontSize: '12px',
+                  boxShadow: '2px 2px 0 0 black',
+                  cursor: ytUrl.trim() ? 'pointer' : 'not-allowed',
+                  opacity: ytUrl.trim() ? 1 : 0.5, flexShrink: 0,
+                }}>play</button>
               </div>
               {ytError && (
                 <p style={{ margin: 0, fontSize: '11px', fontWeight: 800, color: '#C2185B' }}>⚠️ {ytError}</p>
               )}
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  gap: '8px', padding: '12px',
-                  border: '2px solid black', borderRadius: '12px',
-                  background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #D4F0F0`,
-                  color: '#000', fontWeight: 900, fontSize: '12px',
-                  boxShadow: '2px 2px 0 0 black', cursor: 'pointer',
-                }}
-              >
+              <button onClick={() => fileInputRef.current?.click()} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                gap: '8px', padding: '12px',
+                border: '2px solid black', borderRadius: '12px',
+                background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #D4F0F0`,
+                color: '#000', fontWeight: 900, fontSize: '12px',
+                boxShadow: '2px 2px 0 0 black', cursor: 'pointer',
+              }}>
                 <FolderOpen className="size-4" strokeWidth={2.75} />
                 {localFile ? `playing: ${localFile.name}` : 'open a local file (.mp4 .webm .mkv)'}
               </button>
@@ -1344,10 +1285,8 @@ export default function WatchPage() {
                   live chat · {messages.length}
                 </p>
               </div>
-              <div
-                ref={chatScrollRef} onScroll={handleChatScroll}
-                style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '10px 14px' }}
-              >
+              <div ref={chatScrollRef} onScroll={handleChatScroll}
+                style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '10px 14px' }}>
                 {messages.length === 0 ? (
                   <p style={{ textAlign: 'center', fontStyle: 'italic', color: 'rgba(0,0,0,0.4)', fontSize: '12px', margin: '20px 0' }}>
                     say something while you watch 🍿
@@ -1368,11 +1307,9 @@ export default function WatchPage() {
                           background: mine ? '#E2F0D9' : '#FFD1DC',
                           padding: '6px 10px', boxShadow: '2px 2px 0 0 black',
                         }}>
-                          <p style={{
-                            margin: 0, fontSize: '9px', fontWeight: 900,
-                            textTransform: 'uppercase', letterSpacing: '0.06em',
-                            color: 'rgba(0,0,0,0.55)',
-                          }}>{name} · {time}</p>
+                          <p style={{ margin: 0, fontSize: '9px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'rgba(0,0,0,0.55)' }}>
+                            {name} · {time}
+                          </p>
                           <p style={{ margin: '2px 0 0', fontSize: '13px', color: '#000', lineHeight: 1.35, wordBreak: 'break-word' }}>
                             {m.content}
                           </p>
@@ -1387,26 +1324,23 @@ export default function WatchPage() {
                 borderTop: '3px solid black', background: '#E6E6FA',
                 display: 'flex', alignItems: 'stretch', padding: '10px', gap: '8px',
               }}>
-                <input
-                  type="text" value={chatInput}
+                <input type="text" value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
                   placeholder="say something..."
                   style={{
                     flex: 1, minWidth: 0, border: '2px solid black', borderRadius: '12px',
                     background: '#FFFDF5', color: '#000', fontSize: '13px',
                     padding: '10px 12px', outline: 'none', fontWeight: 600,
-                  }}
-                />
-                <button type="submit" disabled={!chatInput.trim()}
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    padding: '10px 14px', border: '2px solid black', borderRadius: '12px',
-                    background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #E2F0D9`,
-                    color: '#000', fontWeight: 900, fontSize: '12px',
-                    boxShadow: '3px 3px 0 0 black',
-                    cursor: chatInput.trim() ? 'pointer' : 'not-allowed',
-                    opacity: chatInput.trim() ? 1 : 0.5, flexShrink: 0, minWidth: '48px',
-                  }}>
+                  }} />
+                <button type="submit" disabled={!chatInput.trim()} style={{
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  padding: '10px 14px', border: '2px solid black', borderRadius: '12px',
+                  background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #E2F0D9`,
+                  color: '#000', fontWeight: 900, fontSize: '12px',
+                  boxShadow: '3px 3px 0 0 black',
+                  cursor: chatInput.trim() ? 'pointer' : 'not-allowed',
+                  opacity: chatInput.trim() ? 1 : 0.5, flexShrink: 0, minWidth: '48px',
+                }}>
                   <Send className="size-4" strokeWidth={2.75} />
                 </button>
               </form>
@@ -1418,14 +1352,13 @@ export default function WatchPage() {
               {room?.dj_email && !isDJ ? `🎙️ DJ: ${room.dj_email.split('@')[0]}` : ' '}
             </p>
             {(isDJ || room?.dj_user_id) && (
-              <button onClick={leaveRoom}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: '6px',
-                  padding: '8px 12px', border: '2px solid black', borderRadius: '999px',
-                  background: '#FFD1DC', color: '#C2185B',
-                  fontWeight: 900, fontSize: '11px',
-                  boxShadow: '2px 2px 0 0 black', cursor: 'pointer',
-                }}>
+              <button onClick={leaveRoom} style={{
+                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                padding: '8px 12px', border: '2px solid black', borderRadius: '999px',
+                background: '#FFD1DC', color: '#C2185B',
+                fontWeight: 900, fontSize: '11px',
+                boxShadow: '2px 2px 0 0 black', cursor: 'pointer',
+              }}>
                 <LogOut className="size-3" strokeWidth={3} />
                 {isDJ ? 'end session' : 'leave'}
               </button>

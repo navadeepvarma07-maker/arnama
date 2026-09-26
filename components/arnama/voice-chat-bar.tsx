@@ -12,6 +12,7 @@ type Participant = {
   iceState: string;
   connState: string;
   audioLevel: number;
+  audioState: string;
 };
 
 type Props = {
@@ -154,11 +155,12 @@ export function VoiceChatBar({
               {myEmail && (
                 <ParticipantChip
                   email={myEmail}
-                  speaking={micOn && participants.length >= 0}
+                  speaking={micOn}
                   mine
                   muted={!micOn}
                   color={AVATAR_COLORS[0]}
                   audioLevel={0}
+                  audioState="mic"
                 />
               )}
               {participants.map((p, i) => (
@@ -173,6 +175,7 @@ export function VoiceChatBar({
                   connState={p.connState}
                   hasAudio={p.hasAudio}
                   audioLevel={p.audioLevel}
+                  audioState={p.audioState}
                 />
               ))}
             </>
@@ -256,6 +259,7 @@ function ParticipantChip({
   connState,
   hasAudio,
   audioLevel,
+  audioState,
 }: {
   email: string;
   speaking: boolean;
@@ -267,6 +271,7 @@ function ParticipantChip({
   connState?: string;
   hasAudio?: boolean;
   audioLevel: number;
+  audioState?: string;
 }) {
   const initials = initialsFor(email, null);
   const name = mine ? 'you' : email.split('@')[0];
@@ -352,6 +357,28 @@ function ParticipantChip({
       >
         {name}
       </span>
+
+      {/* audio state debug badge */}
+      {!mine && (
+        <span
+          style={{
+            fontSize: '8px',
+            fontWeight: 900,
+            fontFamily: 'ui-monospace, monospace',
+            letterSpacing: '-0.02em',
+            color:
+              audioState === 'playing'
+                ? '#3A7A5E'
+                : audioState === 'paused'
+                ? '#C2185B'
+                : audioState === 'error'
+                ? '#C2185B'
+                : 'rgba(0,0,0,0.4)',
+          }}
+        >
+          {audioState || '—'}
+        </span>
+      )}
 
       {/* VU meter (5 bars) */}
       {!mine && ok && (
