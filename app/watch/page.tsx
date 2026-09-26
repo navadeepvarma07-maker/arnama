@@ -312,7 +312,7 @@ export default function WatchPage() {
     return () => clearInterval(i);
   }, [getPlayer]);
 
-  // ----- SYNC LOOP -----
+  // ----- SYNC LOOP (followers) — 800ms, tight drift threshold -----
   useEffect(() => {
     if (!room || isDJ) return;
     const i = setInterval(() => {
@@ -325,11 +325,17 @@ export default function WatchPage() {
           : 0);
       const actual = p.getCurrentTime();
       const drift = Math.abs(actual - computed);
-      const threshold = room.is_playing ? 3 : 0.5;
-      if (drift > threshold) p.seekTo(computed);
-      if (room.is_playing && !p.isPlaying()) p.play();
-      if (!room.is_playing && p.isPlaying()) p.pause();
-    }, 2000);
+      const threshold = room.is_playing ? 1.5 : 0.3;
+      if (drift > threshold) {
+        try { p.seekTo(computed); } catch {}
+      }
+      // Immediate play/pause reaction
+      if (room.is_playing && !p.isPlaying()) {
+        try { p.play(); } catch {}
+      } else if (!room.is_playing && p.isPlaying()) {
+        try { p.pause(); } catch {}
+      }
+    }, 800);
     return () => clearInterval(i);
   }, [room, isDJ, getPlayer]);
 
@@ -398,17 +404,32 @@ export default function WatchPage() {
   async function togglePlay() {
     const p = getPlayer();
     if (!p) return;
+
+    // Follower: local play/pause only (DJ's room state drives the group)
     if (!isDJ) {
       if (p.isPlaying()) p.pause();
       else p.play();
       return;
     }
+
+    // DJ: play/pause locally AND broadcast the new state
     const next = !p.isPlaying();
     const t = p.getCurrentTime();
+
     if (next) {
-      await updateRoom({ is_playing: true, position_seconds: t, started_at: new Date().toISOString() });
+      try { p.play(); } catch {}
+      await updateRoom({
+        is_playing: true,
+        position_seconds: t,
+        started_at: new Date().toISOString(),
+      });
     } else {
-      await updateRoom({ is_playing: false, position_seconds: t, started_at: null });
+      try { p.pause(); } catch {}
+      await updateRoom({
+        is_playing: false,
+        position_seconds: t,
+        started_at: null,
+      });
     }
   }
 
@@ -425,16 +446,29 @@ export default function WatchPage() {
   }
 
   async function leaveRoom() {
+    // Reset the room
     await supabase.from('watch_rooms').update({
       dj_user_id: null, dj_email: null, is_playing: false,
-      position_seconds: 0, started_at: null, updated_at: new Date().toISOString(),
+      position_seconds: 0, started_at: null,
+      video_id: null, video_title: null, local_hint: null,
+      updated_at: new Date().toISOString(),
     }).eq('id', 'main');
+
+    // Wipe the chat for everyone
+    await supabase.from('watch_messages').delete().neq('id', 0);
+    await supabase.from('watch_reactions').delete().neq('id', 0);
+
+    // Local cleanup
     setLocalFile(null);
     if (localUrl) URL.revokeObjectURL(localUrl);
     setLocalUrl(null);
     try { ytPlayerRef.current?.destroy(); } catch {}
     ytPlayerRef.current = null;
     loadedYtIdRef.current = null;
+
+    // Clear local view too
+    setMessages([]);
+    setFloaters([]);
   }
 
   // ----- CHAT -----
