@@ -35,12 +35,8 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
   const [debug, setDebug] = useState<string>('booting…');
 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  // The stream we SEND to peers (always live, mute via gain)
-  const localStreamRef = useRef<MediaStream | null>(null);
-  // The raw mic stream (for cleanup)
-  const rawMicRef = useRef<MediaStream | null>(null);
-  // Mute gain node — 0 = muted, 1 = live
-  const muteGainRef = useRef<GainNode | null>(null);
+  const micTrackRef = useRef<MediaStreamTrack | null>(null);
+  const silentTrackRef = useRef<MediaStreamTrack | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
 
   const peersRef = useRef<
@@ -75,18 +71,14 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       const ctx = audioCtxRef.current;
       if (ctx.state === 'suspended') ctx.resume().catch(() => {});
       return ctx;
-    } catch {
-      return null;
-    }
+    } catch { return null; }
   }, []);
 
   useEffect(() => {
     function unlock() {
       ensureAudioCtx();
       peersRef.current.forEach((p) => {
-        if (p.audioEl && p.audioEl.paused) {
-          p.audioEl.play().catch(() => {});
-        }
+        if (p.audioEl && p.audioEl.paused) p.audioEl.play().catch(() => {});
       });
     }
     window.addEventListener('pointerdown', unlock);
@@ -112,9 +104,26 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
     setParticipants((prev) => prev.filter((p) => p.id !== peerId));
   }, []);
 
+  // Create a SILENT track (constant near-zero audio). Used as placeholder when muted.
+  const createSilentTrack = useCallback((): MediaStreamTrack | null => {
+    try {
+      const ctx = ensureAudioCtx();
+      if (!ctx) return null;
+      const osc = ctx.createOscillator();
+      osc.frequency.value = 1; // subsonic
+      const gain = ctx.createGain();
+      gain.gain.value = 0.0001; // practically silent
+      const dest = ctx.createMediaStreamDestination();
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start();
+      return dest.stream.getAudioTracks()[0];
+    } catch { return null; }
+  }, [ensureAudioCtx]);
+
   const createPeer = useCallback(
     (peerId: string, peerEmail: string, initiator: boolean) => {
-      if (!userId || !email || !localStreamRef.current || !channelRef.current) return null;
+      if (!userId || !email || !channelRef.current) return null;
       const existing = peersRef.current.get(peerId);
       if (existing) return existing;
 
@@ -126,10 +135,13 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
         bundlePolicy: 'max-bundle',
       });
 
-      // Add the LIVE track from our mute-gain stream (always enabled at the RTP level)
-      localStreamRef.current.getTracks().forEach((track) => {
-        try { pc.addTrack(track, localStreamRef.current!); } catch {}
-      });
+      // Add TRANSCEIVER for audio (sendrecv) — gives us a stable sender slot
+      const transceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
+      // Put the CURRENT outgoing track on it (mic if on, silent if off)
+      const outgoing = micOn && micTrackRef.current ? micTrackRef.current : silentTrackRef.current;
+      if (outgoing) {
+        try { transceiver.sender.replaceTrack(outgoing); } catch {}
+      }
 
       const peer = {
         pc,
@@ -148,9 +160,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
         const track = e.track;
         peer.remoteTrack = track;
         const stream = e.streams[0] || new MediaStream([track]);
-
-        log(`✓ track from ${peerEmail.split('@')[0]} — enabled=${track.enabled} muted=${track.muted}`);
-
+        log(`✓ track from ${peerEmail.split('@')[0]} muted=${track.muted}`);
         track.addEventListener('unmute', () => log(`▶ ${peerEmail.split('@')[0]} live`));
         track.addEventListener('mute', () => log(`✗ ${peerEmail.split('@')[0]} muted`));
 
@@ -248,7 +258,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       if (initiator) {
         setTimeout(async () => {
           try {
-            const offer = await pc.createOffer({ offerToReceiveAudio: true });
+            const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             channelRef.current?.send({
               type: 'broadcast', event: 'offer',
@@ -260,7 +270,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
 
       return peer;
     },
-    [userId, email, closePeer, log, ensureAudioCtx]
+    [userId, email, closePeer, log, ensureAudioCtx, micOn]
   );
 
   useEffect(() => {
@@ -270,33 +280,21 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
 
     async function setup() {
       try {
-        // 1. Raw mic
-        const raw = await navigator.mediaDevices.getUserMedia({
+        // 1. Get the raw mic. NEVER touch track.enabled.
+        const micStream = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
           video: false,
         });
-        if (cancelled) { raw.getTracks().forEach((t) => t.stop()); return; }
-        rawMicRef.current = raw;
+        if (cancelled) { micStream.getTracks().forEach((t) => t.stop()); return; }
+        micTrackRef.current = micStream.getAudioTracks()[0];
+        log('mic captured');
 
-        // 2. Route mic → gain → destination stream.
-        //    The dest.stream track is ALWAYS live (never disabled).
-        //    Muting = set gain to 0. This is the fix.
-        const ctx = ensureAudioCtx();
-        if (!ctx) { setError('audio context failed'); return; }
-        if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
-
-        const source = ctx.createMediaStreamSource(raw);
-        const gain = ctx.createGain();
-        gain.gain.value = 0; // start muted
-        const dest = ctx.createMediaStreamDestination();
-        source.connect(gain);
-        gain.connect(dest);
-
-        muteGainRef.current = gain;
-        localStreamRef.current = dest.stream;
+        // 2. Create the silent placeholder track
+        silentTrackRef.current = createSilentTrack();
+        if (!silentTrackRef.current) { setError('silent track failed'); return; }
 
         setConnected(true);
-        log('mic ready — mute via gain');
+        log('ready — tap 🎤 to speak');
       } catch (err: any) {
         const msg =
           err?.name === 'NotAllowedError' ? 'mic permission denied'
@@ -373,11 +371,10 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
 
     return () => {
       cancelled = true;
-      rawMicRef.current?.getTracks().forEach((t) => t.stop());
-      rawMicRef.current = null;
-      localStreamRef.current?.getTracks().forEach((t) => t.stop());
-      localStreamRef.current = null;
-      muteGainRef.current = null;
+      micTrackRef.current?.stop();
+      micTrackRef.current = null;
+      silentTrackRef.current?.stop();
+      silentTrackRef.current = null;
       peersRef.current.forEach((p) => {
         try { p.pc.close(); } catch {}
         try { p.sourceNode?.disconnect(); } catch {}
@@ -391,17 +388,18 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       channelRef.current = null;
       setConnected(false);
     };
-  }, [roomId, userId, email, createPeer, closePeer, log, ensureAudioCtx]);
+  }, [roomId, userId, email, createPeer, closePeer, log, createSilentTrack]);
 
+  // VU meter
   useEffect(() => {
     const i = setInterval(() => {
       const updates: Record<string, { level: number; speaking: boolean; audioState: string; trackState: string }> = {};
 
-      if (rawMicRef.current && micOn) {
+      if (micTrackRef.current && micOn) {
         const ctx = audioCtxRef.current;
         if (ctx && !localAnalyserRef.current) {
           try {
-            const src = ctx.createMediaStreamSource(rawMicRef.current);
+            const src = ctx.createMediaStreamSource(new MediaStream([micTrackRef.current]));
             const an = ctx.createAnalyser();
             an.fftSize = 512;
             src.connect(an);
@@ -459,13 +457,27 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
     return () => clearInterval(i);
   }, [micOn]);
 
-  const toggleMic = useCallback(() => {
-    if (!muteGainRef.current) return;
+  const toggleMic = useCallback(async () => {
+    if (!micTrackRef.current || !silentTrackRef.current) return;
     const ctx = audioCtxRef.current;
-    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+    if (ctx && ctx.state === 'suspended') await ctx.resume().catch(() => {});
     const next = !micOn;
-    // The magic: just flip the gain node. The track stays live at RTP level.
-    muteGainRef.current.gain.value = next ? 1 : 0;
+    const target = next ? micTrackRef.current : silentTrackRef.current;
+
+    // Swap the outgoing track on every peer's sender
+    const swaps: Promise<void>[] = [];
+    peersRef.current.forEach((peer) => {
+      const senders = peer.pc.getSenders();
+      senders.forEach((sender) => {
+        if (sender.track?.kind === 'audio') {
+          swaps.push(sender.replaceTrack(target).catch((err) => {
+            console.error('[voice] replaceTrack failed', err);
+          }));
+        }
+      });
+    });
+    await Promise.all(swaps);
+
     setMicOn(next);
     peersRef.current.forEach((p) => {
       if (p.audioEl && p.audioEl.paused) p.audioEl.play().catch(() => {});
