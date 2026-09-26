@@ -1,6 +1,6 @@
 'use client';
 
-import { Mic, MicOff, VolumeX, RefreshCw } from 'lucide-react';
+import { Mic, MicOff, VolumeX, RefreshCw, Bell } from 'lucide-react';
 import { initialsFor } from '@/lib/use-profile';
 
 type Participant = {
@@ -11,6 +11,7 @@ type Participant = {
   connected: boolean;
   iceState: string;
   connState: string;
+  audioLevel: number;
 };
 
 type Props = {
@@ -24,6 +25,8 @@ type Props = {
   togglePeerMute: (id: string) => void;
   debug?: string;
   onRetry?: () => void;
+  onTestTone?: () => void;
+  ctxState?: string;
 };
 
 const AVATAR_COLORS = ['#E2F0D9', '#FFD1DC', '#E6E6FA', '#FFF5BA', '#D4F0F0'];
@@ -39,6 +42,8 @@ export function VoiceChatBar({
   togglePeerMute,
   debug,
   onRetry,
+  onTestTone,
+  ctxState,
 }: Props) {
   const totalInRoom = participants.length + (connected && myEmail ? 1 : 0);
   const anyFailed = participants.some(
@@ -117,14 +122,7 @@ export function VoiceChatBar({
           >
             voice
           </p>
-          <p
-            style={{
-              margin: '2px 0 0',
-              fontSize: '13px',
-              fontWeight: 900,
-              color: '#000',
-            }}
-          >
+          <p style={{ margin: '2px 0 0', fontSize: '13px', fontWeight: 900, color: '#000' }}>
             {error ? '—' : totalInRoom}
           </p>
         </div>
@@ -156,10 +154,11 @@ export function VoiceChatBar({
               {myEmail && (
                 <ParticipantChip
                   email={myEmail}
-                  speaking={micOn}
+                  speaking={micOn && participants.length >= 0}
                   mine
                   muted={!micOn}
                   color={AVATAR_COLORS[0]}
+                  audioLevel={0}
                 />
               )}
               {participants.map((p, i) => (
@@ -173,11 +172,35 @@ export function VoiceChatBar({
                   iceState={p.iceState}
                   connState={p.connState}
                   hasAudio={p.hasAudio}
+                  audioLevel={p.audioLevel}
                 />
               ))}
             </>
           )}
         </div>
+
+        {onTestTone && (
+          <button
+            onClick={onTestTone}
+            title="Play test tone (check speakers)"
+            style={{
+              width: '36px',
+              height: '36px',
+              borderRadius: '999px',
+              border: '2px solid black',
+              background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #D4F0F0`,
+              color: '#000',
+              boxShadow: '2px 2px 0 0 black',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <Bell className="size-4" strokeWidth={2.75} />
+          </button>
+        )}
 
         {anyFailed && onRetry && (
           <button
@@ -203,7 +226,7 @@ export function VoiceChatBar({
         )}
       </div>
 
-      {debug && (
+      {(debug || ctxState) && (
         <p
           style={{
             margin: 0,
@@ -215,6 +238,7 @@ export function VoiceChatBar({
           }}
         >
           {debug}
+          {ctxState ? ` · audio:${ctxState}` : ''}
         </p>
       )}
     </div>
@@ -231,6 +255,7 @@ function ParticipantChip({
   iceState,
   connState,
   hasAudio,
+  audioLevel,
 }: {
   email: string;
   speaking: boolean;
@@ -241,10 +266,12 @@ function ParticipantChip({
   iceState?: string;
   connState?: string;
   hasAudio?: boolean;
+  audioLevel: number;
 }) {
   const initials = initialsFor(email, null);
   const name = mine ? 'you' : email.split('@')[0];
   const ok = connState === 'connected';
+  const bars = Math.max(0, Math.min(5, Math.round(audioLevel / 12)));
 
   return (
     <button
@@ -325,6 +352,32 @@ function ParticipantChip({
       >
         {name}
       </span>
+
+      {/* VU meter (5 bars) */}
+      {!mine && ok && (
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'flex-end',
+            gap: '1px',
+            height: '12px',
+          }}
+          aria-hidden
+        >
+          {[0, 1, 2, 3, 4].map((i) => (
+            <span
+              key={i}
+              style={{
+                width: '2px',
+                height: `${4 + i * 2}px`,
+                borderRadius: '999px',
+                background: i < bars ? '#3A7A5E' : 'rgba(0,0,0,0.15)',
+              }}
+            />
+          ))}
+        </span>
+      )}
+
       {muted && !mine && (
         <VolumeX className="size-3" strokeWidth={3} style={{ color: '#C2185B' }} />
       )}

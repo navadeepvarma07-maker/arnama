@@ -1285,6 +1285,9 @@ export default function WatchPage() {
           mutedPeers={voice.mutedPeers}
           togglePeerMute={voice.togglePeerMute}
           debug={voice.debug}
+          onRetry={voice.reconnect}
+          onTestTone={voice.playTestTone}
+          ctxState={voice.ctxState}
         />
 
           {/* REACTION ROW */}
