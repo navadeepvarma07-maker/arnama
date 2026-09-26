@@ -8,6 +8,8 @@ type Participant = {
   email: string;
   speaking: boolean;
   hasAudio: boolean;
+  connected: boolean;
+  iceState: string;
 };
 
 type Props = {
@@ -19,19 +21,13 @@ type Props = {
   myEmail: string | null;
   mutedPeers: Set<string>;
   togglePeerMute: (id: string) => void;
+  debug?: string;
 };
 
 const AVATAR_COLORS = ['#E2F0D9', '#FFD1DC', '#E6E6FA', '#FFF5BA', '#D4F0F0'];
 
 export function VoiceChatBar({
-  micOn,
-  toggleMic,
-  participants,
-  connected,
-  error,
-  myEmail,
-  mutedPeers,
-  togglePeerMute,
+  micOn, toggleMic, participants, connected, error, myEmail, mutedPeers, togglePeerMute, debug,
 }: Props) {
   const totalInRoom = participants.length + (connected && myEmail ? 1 : 0);
 
@@ -44,134 +40,110 @@ export function VoiceChatBar({
         padding: '10px 12px',
         boxShadow: '4px 4px 0 0 black',
         display: 'flex',
-        alignItems: 'center',
-        gap: '10px',
+        flexDirection: 'column',
+        gap: '8px',
       }}
     >
-      {/* Mic toggle */}
-      <button
-        onClick={toggleMic}
-        disabled={!!error}
-        aria-label={micOn ? 'Mute mic' : 'Unmute mic'}
-        title={error || (micOn ? 'tap to mute' : 'tap to speak')}
-        style={{
-          width: '48px',
-          height: '48px',
-          borderRadius: '999px',
-          border: '3px solid black',
-          background: error
-            ? '#FFD1DC'
-            : micOn
-            ? `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #7FE5A5`
-            : `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #FFFDF5`,
-          color: '#000',
-          cursor: error ? 'not-allowed' : 'pointer',
-          boxShadow: '3px 3px 0 0 black',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-          opacity: error ? 0.6 : 1,
-          position: 'relative',
-        }}
-      >
-        {micOn ? (
-          <Mic className="size-5" strokeWidth={2.75} />
-        ) : (
-          <MicOff className="size-5" strokeWidth={2.75} />
-        )}
-        {micOn && (
-          <span
-            style={{
-              position: 'absolute',
-              inset: '-4px',
-              borderRadius: '999px',
-              border: '2px solid #3A7A5E',
-              animation: 'voice-pulse 1.4s ease-in-out infinite',
-              pointerEvents: 'none',
-            }}
-          />
-        )}
-      </button>
-
-      {/* Label + count */}
-      <div style={{ minWidth: 0, flexShrink: 0 }}>
-        <p
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <button
+          onClick={toggleMic}
+          disabled={!!error}
+          aria-label={micOn ? 'Mute mic' : 'Unmute mic'}
+          title={error || (micOn ? 'tap to mute' : 'tap to speak')}
           style={{
-            margin: 0,
-            fontSize: '10px',
-            fontWeight: 900,
-            textTransform: 'uppercase',
-            letterSpacing: '0.08em',
-            color: 'rgba(0,0,0,0.55)',
+            width: '48px', height: '48px', borderRadius: '999px',
+            border: '3px solid black',
+            background: error
+              ? '#FFD1DC'
+              : micOn
+              ? `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #7FE5A5`
+              : `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #FFFDF5`,
+            color: '#000',
+            cursor: error ? 'not-allowed' : 'pointer',
+            boxShadow: '3px 3px 0 0 black',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0,
+            opacity: error ? 0.6 : 1,
+            position: 'relative',
           }}
         >
-          voice
-        </p>
-        <p style={{ margin: '2px 0 0', fontSize: '13px', fontWeight: 900, color: '#000' }}>
-          {error ? '—' : totalInRoom}
-        </p>
+          {micOn ? <Mic className="size-5" strokeWidth={2.75} /> : <MicOff className="size-5" strokeWidth={2.75} />}
+          {micOn && (
+            <span
+              style={{
+                position: 'absolute', inset: '-4px', borderRadius: '999px',
+                border: '2px solid #3A7A5E',
+                animation: 'voice-pulse 1.4s ease-in-out infinite',
+                pointerEvents: 'none',
+              }}
+            />
+          )}
+        </button>
+
+        <div style={{ minWidth: 0, flexShrink: 0 }}>
+          <p style={{
+            margin: 0, fontSize: '10px', fontWeight: 900,
+            textTransform: 'uppercase', letterSpacing: '0.08em',
+            color: 'rgba(0,0,0,0.55)',
+          }}>voice</p>
+          <p style={{ margin: '2px 0 0', fontSize: '13px', fontWeight: 900, color: '#000' }}>
+            {error ? '—' : totalInRoom}
+          </p>
+        </div>
+
+        <div style={{
+          flex: 1, minWidth: 0,
+          display: 'flex', gap: '8px',
+          overflowX: 'auto', paddingBottom: '2px',
+        }}>
+          {error ? (
+            <p style={{
+              margin: 0, fontSize: '11px', fontWeight: 800,
+              color: '#C2185B', alignSelf: 'center',
+            }}>⚠️ {error}</p>
+          ) : (
+            <>
+              {myEmail && (
+                <ParticipantChip
+                  email={myEmail}
+                  speaking={micOn}
+                  mine
+                  muted={!micOn}
+                  color={AVATAR_COLORS[0]}
+                />
+              )}
+              {participants.map((p, i) => (
+                <ParticipantChip
+                  key={p.id}
+                  email={p.email}
+                  speaking={p.speaking}
+                  muted={mutedPeers.has(p.id)}
+                  onToggleMute={() => togglePeerMute(p.id)}
+                  color={AVATAR_COLORS[(i + 1) % AVATAR_COLORS.length]}
+                  iceState={p.iceState}
+                  hasAudio={p.hasAudio}
+                />
+              ))}
+            </>
+          )}
+        </div>
       </div>
 
-      {/* Participants row */}
-      <div
-        style={{
-          flex: 1,
-          minWidth: 0,
-          display: 'flex',
-          gap: '8px',
-          overflowX: 'auto',
-          paddingBottom: '2px',
-        }}
-      >
-        {error ? (
-          <p
-            style={{
-              margin: 0,
-              fontSize: '11px',
-              fontWeight: 800,
-              color: '#C2185B',
-              alignSelf: 'center',
-            }}
-          >
-            ⚠️ {error}
-          </p>
-        ) : (
-          <>
-            {/* me */}
-            {myEmail && (
-              <ParticipantChip
-                email={myEmail}
-                speaking={micOn && (participants.length === 0 || false)}
-                mine
-                muted={!micOn}
-                color={AVATAR_COLORS[0]}
-              />
-            )}
-            {participants.map((p, i) => (
-              <ParticipantChip
-                key={p.id}
-                email={p.email}
-                speaking={p.speaking}
-                muted={mutedPeers.has(p.id)}
-                onToggleMute={() => togglePeerMute(p.id)}
-                color={AVATAR_COLORS[(i + 1) % AVATAR_COLORS.length]}
-              />
-            ))}
-          </>
-        )}
-      </div>
+      {debug && (
+        <p style={{
+          margin: 0, fontSize: '9px', fontWeight: 700,
+          color: 'rgba(0,0,0,0.5)', textAlign: 'center',
+          fontFamily: 'ui-monospace, monospace',
+        }}>
+          {debug}
+        </p>
+      )}
     </div>
   );
 }
 
 function ParticipantChip({
-  email,
-  speaking,
-  mine,
-  muted,
-  onToggleMute,
-  color,
+  email, speaking, mine, muted, onToggleMute, color, iceState, hasAudio,
 }: {
   email: string;
   speaking: boolean;
@@ -179,22 +151,30 @@ function ParticipantChip({
   muted?: boolean;
   onToggleMute?: () => void;
   color: string;
+  iceState?: string;
+  hasAudio?: boolean;
 }) {
   const initials = initialsFor(email, null);
   const name = mine ? 'you' : email.split('@')[0];
+  const ok = iceState === 'connected' || iceState === 'completed';
 
   return (
     <button
       onClick={onToggleMute}
       disabled={mine}
-      title={mine ? 'you' : muted ? 'tap to unmute (only you)' : 'tap to mute locally'}
+      title={
+        mine
+          ? 'you'
+          : ok
+          ? muted
+            ? 'tap to unmute (local)'
+            : 'tap to mute (local)'
+          : `connecting (${iceState ?? '…'})`
+      }
       style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '6px',
+        display: 'inline-flex', alignItems: 'center', gap: '6px',
         padding: '4px 10px 4px 4px',
-        border: '2px solid black',
-        borderRadius: '999px',
+        border: '2px solid black', borderRadius: '999px',
         background: speaking
           ? `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #7FE5A5`
           : `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), #FFFDF5`,
@@ -208,38 +188,38 @@ function ParticipantChip({
       <span
         className="gloss-shine"
         style={{
-          width: '24px',
-          height: '24px',
-          borderRadius: '999px',
+          width: '24px', height: '24px', borderRadius: '999px',
           border: '2px solid black',
           background: `linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 55%), ${color}`,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: '9px',
-          fontWeight: 900,
-          color: '#000',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: '9px', fontWeight: 900, color: '#000',
           flexShrink: 0,
+          position: 'relative',
         }}
       >
         {initials}
+        {/* connection dot */}
+        {!mine && (
+          <span
+            style={{
+              position: 'absolute',
+              bottom: '-2px',
+              right: '-2px',
+              width: '8px', height: '8px', borderRadius: '999px',
+              border: '1.5px solid black',
+              background: ok && hasAudio ? '#3A7A5E' : '#E0A800',
+            }}
+          />
+        )}
       </span>
-      <span
-        style={{
-          fontSize: '11px',
-          fontWeight: 900,
-          color: '#000',
-          whiteSpace: 'nowrap',
-          maxWidth: '80px',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-        }}
-      >
+      <span style={{
+        fontSize: '11px', fontWeight: 900, color: '#000',
+        whiteSpace: 'nowrap', maxWidth: '80px',
+        overflow: 'hidden', textOverflow: 'ellipsis',
+      }}>
         {name}
       </span>
-      {muted && !mine && (
-        <VolumeX className="size-3" strokeWidth={3} style={{ color: '#C2185B' }} />
-      )}
+      {muted && !mine && <VolumeX className="size-3" strokeWidth={3} style={{ color: '#C2185B' }} />}
     </button>
   );
 }

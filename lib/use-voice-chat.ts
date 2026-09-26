@@ -8,35 +8,66 @@ type Participant = {
   email: string;
   speaking: boolean;
   hasAudio: boolean;
-};
-
-type Peer = {
-  pc: RTCPeerConnection;
-  pendingIce: RTCIceCandidateInit[];
-  audioEl: HTMLAudioElement;
-  stream: MediaStream | null;
-  muted: boolean;
+  connected: boolean;
+  iceState: string;
 };
 
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
 ];
 
 export function useVoiceChat(roomId: string, userId: string | null, email: string | null) {
   const [micOn, setMicOn] = useState(false);
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [mutedPeers, setMutedPeers] = useState<Set<string>>(new Set());
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState('');
+  const [debug, setDebug] = useState<string>('');
 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
-  const peersRef = useRef<Map<string, Peer>>(new Map());
+  const peersRef = useRef<Map<string, {
+    pc: RTCPeerConnection;
+    pendingIce: RTCIceCandidateInit[];
+    audioEl: HTMLAudioElement;
+    stream: MediaStream | null;
+  }>>(new Map());
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analysersRef = useRef<Map<string, { analyser: AnalyserNode; data: Uint8Array }>>(new Map());
   const mutedPeersRef = useRef<Set<string>>(new Set());
 
-  // -------- Cleanup helper --------
+  const log = useCallback((msg: string) => {
+    console.log('[voice]', msg);
+    setDebug(msg);
+  }, []);
+
+  // -------- Unlock audio on any user gesture --------
+  useEffect(() => {
+    function unlock() {
+      if (!audioCtxRef.current) {
+        try { audioCtxRef.current = new AudioContext(); } catch {}
+      }
+      if (audioCtxRef.current?.state === 'suspended') {
+        audioCtxRef.current.resume().catch(() => {});
+      }
+      // Try to resume every peer audio element
+      peersRef.current.forEach((p) => {
+        p.audioEl.play().catch(() => {});
+      });
+    }
+    window.addEventListener('pointerdown', unlock);
+    window.addEventListener('keydown', unlock);
+    window.addEventListener('touchstart', unlock);
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+      window.removeEventListener('touchstart', unlock);
+    };
+  }, []);
+
+  // -------- Close peer --------
   const closePeer = useCallback((peerId: string) => {
     const peer = peersRef.current.get(peerId);
     if (!peer) return;
@@ -48,32 +79,45 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
     setParticipants((prev) => prev.filter((p) => p.id !== peerId));
   }, []);
 
-  // -------- Create a peer connection --------
-  const createPeer = useCallback((peerId: string, peerEmail: string, initiator: boolean): Peer | null => {
-    if (!userId || !email || !localStreamRef.current || !channelRef.current) return null;
+  // -------- Create peer --------
+  const createPeer = useCallback((peerId: string, peerEmail: string, initiator: boolean) => {
+    if (!userId || !email || !localStreamRef.current || !channelRef.current) {
+      log('createPeer blocked: no local stream yet');
+      return null;
+    }
     const existing = peersRef.current.get(peerId);
     if (existing) return existing;
 
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
-    // Push local audio tracks
     localStreamRef.current.getTracks().forEach((track) => {
-      try { pc.addTrack(track, localStreamRef.current!); } catch {}
+      try { pc.addTrack(track, localStreamRef.current!); } catch (e) {
+        console.error('[voice] addTrack failed', e);
+      }
     });
 
-    const audioEl = new Audio();
+    // Append to DOM (some mobile browsers require this for playback)
+    const audioEl = document.createElement('audio');
     audioEl.autoplay = true;
+    audioEl.setAttribute('playsinline', 'true');
     audioEl.volume = mutedPeersRef.current.has(peerId) ? 0 : 1;
+    audioEl.style.display = 'none';
+    document.body.appendChild(audioEl);
 
-    const peer: Peer = { pc, pendingIce: [], audioEl, stream: null, muted: false };
+    const peer = { pc, pendingIce: [] as RTCIceCandidateInit[], audioEl, stream: null as MediaStream | null };
     peersRef.current.set(peerId, peer);
 
-    // Incoming audio
+    log(`peer ${peerEmail} created (${initiator ? 'offerer' : 'answerer'})`);
+
     pc.ontrack = (e) => {
+      log(`got track from ${peerEmail}`);
       peer.stream = e.streams[0];
       audioEl.srcObject = e.streams[0];
-      audioEl.play().catch(() => {});
-      // attach analyser for speaking detection
+      audioEl.play().catch((err) => {
+        log(`autoplay blocked for ${peerEmail} — tap anywhere to unlock`);
+      });
+
+      // Analyzer for speaking detection
       try {
         if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
         const ctx = audioCtxRef.current;
@@ -83,15 +127,17 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
         analyser.fftSize = 512;
         src.connect(analyser);
         analysersRef.current.set(peerId, { analyser, data: new Uint8Array(analyser.frequencyBinCount) });
-      } catch {}
+      } catch (err) {
+        console.error('[voice] analyser failed', err);
+      }
+
       setParticipants((prev) =>
         prev.some((p) => p.id === peerId)
-          ? prev.map((p) => (p.id === peerId ? { ...p, hasAudio: true } : p))
-          : [...prev, { id: peerId, email: peerEmail, speaking: false, hasAudio: true }]
+          ? prev.map((p) => (p.id === peerId ? { ...p, hasAudio: true, connected: true } : p))
+          : [...prev, { id: peerId, email: peerEmail, speaking: false, hasAudio: true, connected: true, iceState: pc.iceConnectionState }]
       );
     };
 
-    // ICE candidates → broadcast
     pc.onicecandidate = (e) => {
       if (e.candidate && channelRef.current) {
         channelRef.current.send({
@@ -102,20 +148,42 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       }
     };
 
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+    pc.oniceconnectionstatechange = () => {
+      log(`ICE ${peerEmail}: ${pc.iceConnectionState}`);
+      setParticipants((prev) =>
+        prev.map((p) => (p.id === peerId ? { ...p, iceState: pc.iceConnectionState } : p))
+      );
+      if (pc.iceConnectionState === 'failed') {
+        // Try restart
+        try {
+          pc.restartIce();
+        } catch {}
+      }
+      if (pc.iceConnectionState === 'closed') {
         closePeer(peerId);
       }
     };
 
-    // Track this peer in state
+    pc.onconnectionstatechange = () => {
+      log(`conn ${peerEmail}: ${pc.connectionState}`);
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        closePeer(peerId);
+      }
+    };
+
     setParticipants((prev) =>
       prev.some((p) => p.id === peerId)
         ? prev
-        : [...prev, { id: peerId, email: peerEmail, speaking: false, hasAudio: false }]
+        : [...prev, {
+            id: peerId,
+            email: peerEmail,
+            speaking: false,
+            hasAudio: false,
+            connected: false,
+            iceState: pc.iceConnectionState,
+          }]
     );
 
-    // Initiate offer
     if (initiator) {
       (async () => {
         try {
@@ -126,81 +194,74 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
             event: 'offer',
             payload: { from: userId, to: peerId, sdp: offer },
           });
+          log(`offer sent to ${peerEmail}`);
         } catch (err) {
-          console.error('[voice] offer failed:', err);
+          console.error('[voice] offer failed', err);
+          log(`offer failed: ${(err as any)?.message}`);
         }
       })();
     }
 
     return peer;
-  }, [userId, email, closePeer]);
+  }, [userId, email, closePeer, log]);
 
-  // -------- Main effect: set up channel + presence + signalling --------
+  // -------- Main setup --------
   useEffect(() => {
     if (!userId || !email) return;
     let cancelled = false;
+    log('starting…');
 
     async function setup() {
-      // 1. Local mic (only if user turns it on — we get the stream lazily below)
-      //    Actually, get it upfront so we can add tracks immediately when connecting.
+      // 1. Grab mic
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          video: false,
         });
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
+        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
         localStreamRef.current = stream;
-        // Start muted
         stream.getAudioTracks().forEach((t) => (t.enabled = false));
         setConnected(true);
+        log('mic ready (muted by default)');
       } catch (err: any) {
         const msg =
-          err?.name === 'NotAllowedError'
-            ? 'mic permission denied'
-            : err?.name === 'NotFoundError'
-            ? 'no microphone found'
-            : 'could not access mic';
+          err?.name === 'NotAllowedError' ? 'mic permission denied'
+          : err?.name === 'NotFoundError' ? 'no microphone found'
+          : err?.name === 'NotReadableError' ? 'mic busy (another tab using it?)'
+          : `mic failed: ${err?.name}`;
         setError(msg);
+        log(`error: ${msg}`);
         return;
       }
 
-      // 2. Channel
+      // 2. Signalling channel
       const ch = supabase.channel(`voice-${roomId}`, {
         config: { presence: { key: userId } },
       });
       channelRef.current = ch;
 
-      // 3. Presence sync — decide who initiates
       ch.on('presence', { event: 'sync' }, () => {
         const state = ch.presenceState();
         const liveIds = Object.keys(state);
+        log(`presence sync — ${liveIds.length} online`);
 
-        // Connect to new peers
         liveIds.forEach((id) => {
           if (id === userId) return;
           if (peersRef.current.has(id)) return;
           const meta: any = (state[id] as any)?.[0] ?? {};
           const peerEmail = meta.email ?? 'someone';
-          // Lower id initiates to avoid double offers
           const initiator = userId > id;
           createPeer(id, peerEmail, initiator);
         });
 
-        // Drop departed peers
         peersRef.current.forEach((_, id) => {
           if (!liveIds.includes(id)) closePeer(id);
         });
       });
 
-      // 4. Signalling handlers
       ch.on('broadcast', { event: 'offer' }, async ({ payload }: any) => {
         if (payload?.to !== userId) return;
+        log(`offer received from ${payload.from?.slice(0, 6)}`);
         const peer = createPeer(payload.from, 'someone', false);
         if (!peer) return;
         try {
@@ -216,13 +277,15 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
             event: 'answer',
             payload: { from: userId, to: payload.from, sdp: answer },
           });
+          log(`answer sent`);
         } catch (err) {
-          console.error('[voice] answer failed:', err);
+          console.error('[voice] answer failed', err);
         }
       });
 
       ch.on('broadcast', { event: 'answer' }, async ({ payload }: any) => {
         if (payload?.to !== userId) return;
+        log(`answer received`);
         const peer = peersRef.current.get(payload.from);
         if (!peer) return;
         try {
@@ -232,7 +295,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
           }
           peer.pendingIce = [];
         } catch (err) {
-          console.error('[voice] setRemote(answer) failed:', err);
+          console.error('[voice] setRemote(answer) failed', err);
         }
       });
 
@@ -247,8 +310,8 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
         }
       });
 
-      // 5. Subscribe + track presence
       ch.subscribe(async (status) => {
+        log(`channel: ${status}`);
         if (status === 'SUBSCRIBED') {
           await ch.track({ user_id: userId, email });
         }
@@ -259,12 +322,16 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
 
     return () => {
       cancelled = true;
-      // Stop mic
+      log('cleanup');
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
       localStreamRef.current = null;
-      // Close all peers
-      peersRef.current.forEach((_, id) => closePeer(id));
-      // Leave channel
+      peersRef.current.forEach((peer) => {
+        try { peer.pc.close(); } catch {}
+        try { peer.audioEl.pause(); } catch {}
+        try { peer.audioEl.remove(); } catch {}
+      });
+      peersRef.current.clear();
+      analysersRef.current.clear();
       if (channelRef.current) {
         try { channelRef.current.untrack(); } catch {}
         supabase.removeChannel(channelRef.current);
@@ -272,35 +339,31 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       channelRef.current = null;
       setConnected(false);
     };
-  }, [roomId, userId, email, createPeer, closePeer]);
+  }, [roomId, userId, email, createPeer, closePeer, log]);
 
-  // -------- Speaking detection loop --------
+  // -------- Speaking detection --------
   useEffect(() => {
     const i = setInterval(() => {
       const updates: Record<string, boolean> = {};
 
-      // Local analyser (self)
-      if (localStreamRef.current && micOn) {
-        if (!analysersRef.current.has('me')) {
-          try {
-            if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
-            const ctx = audioCtxRef.current;
-            if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-            const src = ctx.createMediaStreamSource(localStreamRef.current);
-            const analyser = ctx.createAnalyser();
-            analyser.fftSize = 512;
-            src.connect(analyser);
-            analysersRef.current.set('me', { analyser, data: new Uint8Array(analyser.frequencyBinCount) });
-          } catch {}
-        }
+      if (localStreamRef.current && micOn && !analysersRef.current.has('me')) {
+        try {
+          if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+          const ctx = audioCtxRef.current;
+          if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+          const src = ctx.createMediaStreamSource(localStreamRef.current);
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 512;
+          src.connect(analyser);
+          analysersRef.current.set('me', { analyser, data: new Uint8Array(analyser.frequencyBinCount) });
+        } catch {}
       }
 
       analysersRef.current.forEach(({ analyser, data }, id) => {
         analyser.getByteFrequencyData(data);
         let sum = 0;
         for (let i = 0; i < data.length; i++) sum += data[i];
-        const avg = sum / data.length;
-        updates[id] = avg > 12;
+        updates[id] = sum / data.length > 12;
       });
 
       setParticipants((prev) =>
@@ -310,26 +373,37 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
     return () => clearInterval(i);
   }, [micOn]);
 
-  // -------- Mic toggle --------
+  // -------- Mic toggle (also unlocks autoplay) --------
   const toggleMic = useCallback(() => {
     if (!localStreamRef.current) return;
     const next = !micOn;
     localStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = next));
     setMicOn(next);
-  }, [micOn]);
 
-  // -------- Per-peer local mute --------
+    // Unlock audio context + every peer's audio element (user gesture)
+    if (next) {
+      if (!audioCtxRef.current) {
+        try { audioCtxRef.current = new AudioContext(); } catch {}
+      }
+      audioCtxRef.current?.resume().catch(() => {});
+      peersRef.current.forEach((p) => {
+        p.audioEl.play().catch(() => {});
+      });
+      log('mic ON');
+    } else {
+      log('mic OFF');
+    }
+  }, [micOn, log]);
+
+  // -------- Peer mute (local) --------
   const togglePeerMute = useCallback((peerId: string) => {
     const peer = peersRef.current.get(peerId);
     if (!peer) return;
     const next = !mutedPeersRef.current.has(peerId);
     if (next) mutedPeersRef.current.add(peerId);
     else mutedPeersRef.current.delete(peerId);
-    peer.muted = next;
     peer.audioEl.volume = next ? 0 : 1;
-    // Force re-render of participants row (muted state not shown in state, but we
-    // can nudge by creating new array ref)
-    setParticipants((prev) => [...prev]);
+    setMutedPeers(new Set(mutedPeersRef.current));
   }, []);
 
   return {
@@ -339,6 +413,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
     connected,
     error,
     togglePeerMute,
-    mutedPeers: mutedPeersRef.current,
+    mutedPeers,
+    debug,
   };
 }

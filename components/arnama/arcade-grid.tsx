@@ -247,7 +247,6 @@ function WatchCartridge() {
     <div
       className="group relative overflow-hidden rounded-3xl border-4 border-black p-5 hover:-translate-y-1 active:translate-y-0.5 transition-transform"
       style={{
-        // deep night sky: navy → purple → midnight blue
         background: `
           radial-gradient(ellipse at 80% 10%, rgba(180, 160, 255, 0.35) 0%, rgba(180, 160, 255, 0) 55%),
           radial-gradient(ellipse at 20% 100%, rgba(120, 100, 220, 0.4) 0%, rgba(120, 100, 220, 0) 60%),
@@ -257,29 +256,19 @@ function WatchCartridge() {
         minHeight: '180px',
         display: 'flex',
         flexDirection: 'column',
-        textDecoration: 'none',
         position: 'relative',
       }}
     >
-      {/* top 3 decorative bars — same as every other cartridge */}
-      <div className="flex gap-1.5">
-        <span
-          className="h-1.5 w-8 rounded-full"
-          style={{ background: 'rgba(255,255,255,0.22)' }}
-        />
-        <span
-          className="h-1.5 w-8 rounded-full"
-          style={{ background: 'rgba(255,255,255,0.22)' }}
-        />
-        <span
-          className="h-1.5 w-8 rounded-full"
-          style={{ background: 'rgba(255,255,255,0.22)' }}
-        />
+      {/* top 3 bars — same as every other cartridge */}
+      <div className="flex gap-1.5 relative z-10">
+        <span className="h-1.5 w-8 rounded-full" style={{ background: 'rgba(255,255,255,0.22)' }} />
+        <span className="h-1.5 w-8 rounded-full" style={{ background: 'rgba(255,255,255,0.22)' }} />
+        <span className="h-1.5 w-8 rounded-full" style={{ background: 'rgba(255,255,255,0.22)' }} />
       </div>
 
-      {/* Moon icon in the same circular style as other cartridges */}
+      {/* Moon icon in circle */}
       <div
-        className="mt-4 flex size-14 shrink-0 items-center justify-center rounded-full border-4 border-black"
+        className="mt-4 flex size-14 shrink-0 items-center justify-center rounded-full border-4 border-black relative z-10"
         style={{
           background: `linear-gradient(180deg, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0) 60%), #FFFDF5`,
           boxShadow: '3px 3px 0 0 black',
@@ -292,90 +281,130 @@ function WatchCartridge() {
         />
       </div>
 
-      {/* title + subtitle */}
-      <div className="mt-auto pt-4">
+      {/* title + subtitle with animals inline */}
+      <div className="mt-auto pt-4 relative z-10">
         <h3
           className="font-display text-lg leading-tight"
           style={{ color: '#FFFDF5' }}
         >
           WATCH
         </h3>
-        <p
-          className="mt-1 text-xs font-bold"
-          style={{ color: 'rgba(255,253,245,0.7)' }}
-        >
-          Movie night
-        </p>
+
+        <div className="mt-1 flex items-center gap-2">
+          <p
+            className="text-xs font-bold"
+            style={{ color: 'rgba(255,253,245,0.7)' }}
+          >
+            Movie night
+          </p>
+          <div className="flex items-end" style={{ gap: '-4px' }}>
+            <span
+              style={{
+                fontSize: '16px',
+                lineHeight: 1,
+                transform: 'rotate(-8deg) translateY(-1px)',
+                filter: 'drop-shadow(1px 1px 0 rgba(0,0,0,0.35))',
+              }}
+            >
+              🐱
+            </span>
+            <span
+              style={{
+                fontSize: '14px',
+                lineHeight: 1,
+                transform: 'translateY(2px) rotate(5deg)',
+                filter: 'drop-shadow(1px 1px 0 rgba(0,0,0,0.35))',
+              }}
+            >
+              🐭
+            </span>
+            <span
+              style={{
+                fontSize: '16px',
+                lineHeight: 1,
+                transform: 'rotate(-3deg) translateY(-1px)',
+                filter: 'drop-shadow(1px 1px 0 rgba(0,0,0,0.35))',
+              }}
+            >
+              🐰
+            </span>
+          </div>
+        </div>
       </div>
 
-      {/* scattered stars — top right & middle */}
+      {/* Moon peeking from top-right — now fully inside the card */}
       <span
         className="absolute"
         style={{
-          top: '18px',
-          right: '20px',
-          fontSize: '14px',
-          lineHeight: 1,
-          opacity: 0.9,
-          filter: 'drop-shadow(0 0 4px rgba(255,255,200,0.9))',
-        }}
-      >
-        ✨
-      </span>
-      <span
-        className="absolute"
-        style={{
-          top: '34px',
-          right: '56px',
-          fontSize: '10px',
-          lineHeight: 1,
-          opacity: 0.75,
-        }}
-      >
-        ⭐
-      </span>
-      <span
-        className="absolute"
-        style={{
-          top: '58px',
-          right: '24px',
-          fontSize: '9px',
-          lineHeight: 1,
-          opacity: 0.7,
-        }}
-      >
-        ✨
-      </span>
-      <span
-        className="absolute"
-        style={{
-          top: '14px',
-          left: '70px',
-          fontSize: '8px',
-          lineHeight: 1,
-          opacity: 0.6,
-        }}
-      >
-        ⭐
-      </span>
-
-      {/* tiny crescent moon peeking top-right */}
-      <span
-        className="absolute"
-        style={{
-          top: '-4px',
-          right: '-4px',
-          fontSize: '34px',
+          top: '10px',
+          right: '14px',
+          fontSize: '26px',
           lineHeight: 1,
           transform: 'rotate(-12deg)',
           filter: 'drop-shadow(0 2px 4px rgba(255,255,220,0.5))',
           opacity: 0.95,
+          zIndex: 1,
         }}
       >
         🌙
       </span>
 
-      {/* popcorn as a tiny floating snack — bottom-right */}
+      {/* scattered stars — moved away from moon area */}
+      <span
+        className="absolute"
+        style={{
+          top: '22px',
+          right: '58px',
+          fontSize: '11px',
+          lineHeight: 1,
+          opacity: 0.85,
+          filter: 'drop-shadow(0 0 3px rgba(255,255,200,0.9))',
+          zIndex: 1,
+        }}
+      >
+        ✨
+      </span>
+      <span
+        className="absolute"
+        style={{
+          top: '46px',
+          right: '26px',
+          fontSize: '10px',
+          lineHeight: 1,
+          opacity: 0.75,
+          zIndex: 1,
+        }}
+      >
+        ⭐
+      </span>
+      <span
+        className="absolute"
+        style={{
+          top: '70px',
+          right: '52px',
+          fontSize: '8px',
+          lineHeight: 1,
+          opacity: 0.65,
+          zIndex: 1,
+        }}
+      >
+        ✨
+      </span>
+      <span
+        className="absolute"
+        style={{
+          top: '18px',
+          left: '72px',
+          fontSize: '8px',
+          lineHeight: 1,
+          opacity: 0.6,
+          zIndex: 1,
+        }}
+      >
+        ⭐
+      </span>
+
+      {/* popcorn — bottom right, floating solo */}
       <span
         className="absolute"
         style={{
@@ -385,55 +414,13 @@ function WatchCartridge() {
           lineHeight: 1,
           transform: 'rotate(14deg)',
           filter: 'drop-shadow(1px 2px 0 rgba(0,0,0,0.35))',
+          zIndex: 2,
         }}
       >
         🍿
       </span>
 
-      {/* audience — Tom, Jerry, Rabbit watching from below, tucked in */}
-      <div
-        className="absolute"
-        style={{
-          bottom: '14px',
-          left: '18px',
-          display: 'flex',
-          gap: '-6px',
-          alignItems: 'flex-end',
-        }}
-      >
-        <span
-          style={{
-            fontSize: '20px',
-            lineHeight: 1,
-            transform: 'rotate(-8deg) translateY(0)',
-            filter: 'drop-shadow(1px 2px 0 rgba(0,0,0,0.35))',
-          }}
-        >
-          🐱
-        </span>
-        <span
-          style={{
-            fontSize: '18px',
-            lineHeight: 1,
-            transform: 'translateY(3px) rotate(5deg)',
-            filter: 'drop-shadow(1px 2px 0 rgba(0,0,0,0.35))',
-          }}
-        >
-          🐭
-        </span>
-        <span
-          style={{
-            fontSize: '20px',
-            lineHeight: 1,
-            transform: 'rotate(-3deg) translateY(-1px)',
-            filter: 'drop-shadow(1px 2px 0 rgba(0,0,0,0.35))',
-          }}
-        >
-          🐰
-        </span>
-      </div>
-
-      {/* glass shine overlay — same recipe as other cartridges */}
+      {/* glass shine overlay — same as other cartridges */}
       <div
         aria-hidden
         style={{
