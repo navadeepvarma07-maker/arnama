@@ -10,7 +10,7 @@ export function SWRegistrar() {
     navigator.serviceWorker
       .register('/sw.js', { scope: '/' })
       .then((reg) => console.log('[sw] registered', reg.scope))
-      .catch((err) => console.error('[sw] register failed:', err));
+      .catch(() => {});
   }, []);
 
   return null;
