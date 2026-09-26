@@ -211,20 +211,7 @@ export default function WatchPage() {
     }).subscribe(async (s) => { if (s === 'SUBSCRIBED') await ch.track({ user_id: userId, email }); });
     return () => { supabase.removeChannel(ch); };
   }, [userId, email]);
-  // DJ keeps room.position_seconds fresh so followers don't drift
-  useEffect(() => {
-    if (!isDJ || !room?.is_playing) return;
-    const i = setInterval(async () => {
-      const p = getPlayer();
-      if (!p) return;
-      const t = p.getCurrentTime();
-      await supabase
-        .from('watch_rooms')
-        .update({ position_seconds: t })
-        .eq('id', 'main');
-    }, 1500);
-    return () => clearInterval(i);
-  }, [isDJ, room?.is_playing, getPlayer]);
+
   useEffect(() => {
     if (!email) return;
     supabase.from('watch_messages').select('*').order('created_at', { ascending: true }).limit(200)
@@ -362,6 +349,20 @@ export default function WatchPage() {
     }, 400);
     return () => clearInterval(i);
   }, [room, isDJ, getPlayer]);
+    // DJ pushes position every 1.5s so followers stay locked
+    useEffect(() => {
+        if (!isDJ || !room?.is_playing) return;
+        const i = setInterval(async () => {
+          const p = getPlayer();
+          if (!p) return;
+          const t = p.getCurrentTime();
+          await supabase
+            .from('watch_rooms')
+            .update({ position_seconds: t })
+            .eq('id', 'main');
+        }, 1500);
+        return () => clearInterval(i);
+      }, [isDJ, room?.is_playing, getPlayer]);
 
   async function updateRoom(patch: Partial<RoomState>) {
     if (!userId || !email) return;
