@@ -125,7 +125,6 @@ export default function WatchPage() {
   const lastTapRef = useRef(0);
 
   const isDJ = !!userId && room?.dj_user_id === userId;
-
   const voice = useVoiceChat('main', userId, email);
 
   useEffect(() => { setMounted(true); }, []);
@@ -252,24 +251,19 @@ export default function WatchPage() {
     return () => clearInterval(i);
   }, []);
 
-  // Create YouTube player — depends on room.video_id AND layout mode so it
-  // re-inits cleanly when the container is remounted.
+  // YT player — re-init only on video_id / mode change (not on layout toggles)
   useEffect(() => {
     if (!room || room.mode !== 'youtube' || !room.video_id) return;
     let cancelled = false;
     (async () => {
       const YT = await loadYT();
       if (cancelled) return;
-
-      // Always destroy any existing player — new container means new player
       try { ytPlayerRef.current?.destroy(); } catch {}
       ytPlayerRef.current = null;
       loadedYtIdRef.current = null;
-
       const container = ytContainerRef.current;
       if (!container) return;
       container.innerHTML = '';
-
       const player = new YT.Player(container, {
         videoId: room.video_id,
         playerVars: { controls: 0, disablekb: 1, modestbranding: 1, rel: 0, playsinline: 1 },
@@ -279,11 +273,7 @@ export default function WatchPage() {
             ytPlayerRef.current = player;
             loadedYtIdRef.current = room.video_id;
             const r = room;
-            const computed =
-              (r.position_seconds ?? 0) +
-              (r.is_playing && r.started_at
-                ? (Date.now() - new Date(r.started_at).getTime()) / 1000
-                : 0);
+            const computed = r.position_seconds ?? 0;
             try { player.seekTo(computed, true); } catch {}
             if (r.is_playing) { try { player.playVideo(); } catch {} }
             else { try { player.pauseVideo(); } catch {} }
@@ -293,7 +283,7 @@ export default function WatchPage() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [room?.mode, room?.video_id]);
+  }, [room?.mode, room?.video_id]);
 
   useEffect(() => () => { try { ytPlayerRef.current?.destroy(); } catch {} }, []);
 
@@ -334,12 +324,12 @@ export default function WatchPage() {
     return () => clearInterval(i);
   }, [getPlayer]);
 
+  // Follower sync — position-only, no clock drift
   useEffect(() => {
     if (!room || isDJ) return;
     const i = setInterval(() => {
       const p = getPlayer();
       if (!p) return;
-      // Position-only sync — no timestamps, no clock drift
       const target = room.position_seconds ?? 0;
       const drift = Math.abs(p.getCurrentTime() - target);
       const threshold = room.is_playing ? 1.2 : 0.3;
@@ -349,20 +339,21 @@ export default function WatchPage() {
     }, 400);
     return () => clearInterval(i);
   }, [room, isDJ, getPlayer]);
-    // DJ pushes position every 1.5s so followers stay locked
-    useEffect(() => {
-        if (!isDJ || !room?.is_playing) return;
-        const i = setInterval(async () => {
-          const p = getPlayer();
-          if (!p) return;
-          const t = p.getCurrentTime();
-          await supabase
-            .from('watch_rooms')
-            .update({ position_seconds: t })
-            .eq('id', 'main');
-        }, 1500);
-        return () => clearInterval(i);
-      }, [isDJ, room?.is_playing, getPlayer]);
+
+  // DJ pushes position every 1.5s
+  useEffect(() => {
+    if (!isDJ || !room?.is_playing) return;
+    const i = setInterval(async () => {
+      const p = getPlayer();
+      if (!p) return;
+      const t = p.getCurrentTime();
+      await supabase
+        .from('watch_rooms')
+        .update({ position_seconds: t })
+        .eq('id', 'main');
+    }, 1500);
+    return () => clearInterval(i);
+  }, [isDJ, room?.is_playing, getPlayer]);
 
   async function updateRoom(patch: Partial<RoomState>) {
     if (!userId || !email) return;
@@ -596,12 +587,7 @@ export default function WatchPage() {
   const showEmpty = !room?.video_id && !room?.local_hint;
   const hasVideo = showYTPlayer || showLocalPlayer;
 
-  // ───── VIDEO WRAPPER — SINGLE INSTANCE, positioned by CSS only ─────
-  // docked: in flow (static)          → rendered inside the column
-  // floating: fixed at videoPos       → rendered at top level
-  // immersive: fixed full screen      → rendered at top level
-  const videoVisible = !immersive && !floating; // shows inline in column
-
+  // Video inner — declared ONCE. Used by whichever container is active.
   const videoInner = (
     <>
       {showYTPlayer && (
@@ -664,93 +650,17 @@ export default function WatchPage() {
           zIndex: 6,
         }}>{f.emoji}</span>
       ))}
-
-      {/* floating mode controls */}
-      {floating && !immersive && (
-        <>
-          <div
-            onPointerDown={startDrag} onPointerMove={onDrag}
-            onPointerUp={endDrag} onPointerCancel={endDrag}
-            style={{
-              position: 'absolute', top: 0, left: 0, right: 0, height: '18px',
-              background: 'rgba(0,0,0,0.65)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              cursor: draggingVideo ? 'grabbing' : 'grab',
-              zIndex: 4, touchAction: 'none',
-            }}
-          >
-            <GripHorizontal className="size-3" strokeWidth={3} style={{ color: '#FFF', opacity: 0.7 }} />
-          </div>
-          <button onClick={exitFloating} style={{
-            position: 'absolute', top: '24px', right: '8px', width: '26px', height: '26px',
-            border: '2px solid #FFF', borderRadius: '999px',
-            background: 'rgba(0,0,0,0.6)', color: '#FFF',
-            cursor: 'pointer', zIndex: 5,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}><Minimize2 className="size-3" strokeWidth={3} /></button>
-          <button onClick={enterImmersive} style={{
-            position: 'absolute', top: '24px', right: '40px', width: '26px', height: '26px',
-            border: '2px solid #FFF', borderRadius: '999px',
-            background: 'rgba(0,0,0,0.6)', color: '#FFF',
-            cursor: 'pointer', zIndex: 5,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}><Maximize2 className="size-3" strokeWidth={3} /></button>
-          <div
-            onPointerDown={startResize} onPointerMove={onResize}
-            onPointerUp={endResize} onPointerCancel={endResize}
-            style={{
-              position: 'absolute', bottom: 0, right: 0, width: '24px', height: '24px',
-              background: 'rgba(0,0,0,0.7)', cursor: 'nwse-resize',
-              zIndex: 5, touchAction: 'none',
-              borderTopLeftRadius: '12px',
-              display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end',
-            }}
-          >
-            <span style={{
-              width: '10px', height: '10px',
-              borderRight: '2px solid #FFF', borderBottom: '2px solid #FFF',
-              margin: '0 3px 3px 0', borderRadius: '0 0 4px 0',
-            }} />
-          </div>
-        </>
-      )}
-
-      {/* docked mode — float + full buttons */}
-      {!floating && !immersive && !showEmpty && (
-        <div style={{
-          position: 'absolute', top: '10px', right: '10px',
-          display: 'flex', gap: '6px', zIndex: 5,
-        }}>
-          <button onClick={enterFloating} style={{
-            padding: '6px 10px', border: '2px solid #FFF', borderRadius: '999px',
-            background: 'rgba(0,0,0,0.55)', color: '#FFF',
-            fontSize: '11px', fontWeight: 900, cursor: 'pointer',
-            display: 'inline-flex', alignItems: 'center', gap: '4px',
-          }}>
-            <GripHorizontal className="size-3" strokeWidth={3} /> float
-          </button>
-          <button onClick={enterImmersive} style={{
-            padding: '6px 10px', border: '2px solid #FFF', borderRadius: '999px',
-            background: 'rgba(0,0,0,0.55)', color: '#FFF',
-            fontSize: '11px', fontWeight: 900, cursor: 'pointer',
-            display: 'inline-flex', alignItems: 'center', gap: '4px',
-          }}>
-            <Maximize2 className="size-3" strokeWidth={3} /> full
-          </button>
-        </div>
-      )}
     </>
   );
 
-  // Immersive overlay (chrome only, video renders in place above)
+  // Immersive chrome (portals — bars only, video rendered separately)
   const immersiveChrome = immersive && mounted ? createPortal(
     <>
-      {/* TOP BAR */}
       <div
         data-controls
         style={{
           position: 'fixed', top: 0, left: 0, right: 0,
-          padding: '14px 16px', zIndex: 9999,
+          padding: '14px 16px', zIndex: 10000,
           background: 'linear-gradient(180deg, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0) 100%)',
           display: 'flex', alignItems: 'flex-start', gap: '10px',
           opacity: controlsVisible ? 1 : 0,
@@ -836,13 +746,12 @@ export default function WatchPage() {
         </div>
       </div>
 
-      {/* BOTTOM BAR */}
       <div
         data-controls
         onClick={(e) => e.stopPropagation()}
         style={{
           position: 'fixed', bottom: 0, left: 0, right: 0,
-          padding: '16px 20px 20px', zIndex: 9999,
+          padding: '16px 20px 20px', zIndex: 10000,
           background: 'linear-gradient(0deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%)',
           opacity: controlsVisible ? 1 : 0,
           transition: 'opacity 0.25s',
@@ -917,7 +826,6 @@ export default function WatchPage() {
         </div>
       </div>
 
-      {/* CHAT DRAWER */}
       {chatDrawerOpen && (
         <div
           data-controls
@@ -928,7 +836,7 @@ export default function WatchPage() {
             backdropFilter: 'blur(20px)',
             WebkitBackdropFilter: 'blur(20px)',
             borderLeft: '4px solid black',
-            display: 'flex', flexDirection: 'column', zIndex: 10000,
+            display: 'flex', flexDirection: 'column', zIndex: 10001,
           }}
         >
           <div style={{
@@ -1020,54 +928,90 @@ export default function WatchPage() {
     document.body
   ) : null;
 
-  // Choose video wrapper style
-  let videoWrapStyle: React.CSSProperties;
-  if (immersive) {
-    videoWrapStyle = {
-      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-      zIndex: 9998, background: '#000', overflow: 'hidden',
-    };
-  } else if (floating && videoPos) {
-    videoWrapStyle = {
-      position: 'fixed',
-      left: videoPos.x, top: videoPos.y,
-      width: videoPos.w, height: videoPos.h,
-      zIndex: 800,
-      borderRadius: '18px',
-      border: '4px solid black',
-      boxShadow: '6px 6px 0 0 black',
-      overflow: 'hidden',
-      background: '#000',
-    };
-  } else {
-    videoWrapStyle = {
-      position: 'relative',
-      width: '100%',
-      aspectRatio: '16 / 9',
-      borderRadius: '18px',
-      border: '4px solid black',
-      boxShadow: '6px 6px 0 0 black',
-      overflow: 'hidden',
-      background: '#000',
-      flexShrink: 0,
-    };
-  }
+  const immersiveVideo = immersive && mounted ? createPortal(
+    <div
+      style={{ position: 'fixed', inset: 0, zIndex: 9999, background: '#000', overflow: 'hidden' }}
+      onDoubleClick={handleVideoTap}
+    >
+      {videoInner}
+    </div>,
+    document.body
+  ) : null;
+
+  const floatingVideo = !immersive && floating && videoPos && mounted ? createPortal(
+    <div
+      style={{
+        position: 'fixed',
+        left: videoPos.x, top: videoPos.y,
+        width: videoPos.w, height: videoPos.h,
+        zIndex: 900,
+        borderRadius: '18px',
+        border: '4px solid black',
+        boxShadow: '6px 6px 0 0 black',
+        overflow: 'hidden',
+        background: '#000',
+      }}
+      onDoubleClick={handleVideoTap}
+    >
+      {videoInner}
+      <div
+        onPointerDown={startDrag} onPointerMove={onDrag}
+        onPointerUp={endDrag} onPointerCancel={endDrag}
+        style={{
+          position: 'absolute', top: 0, left: 0, right: 0, height: '18px',
+          background: 'rgba(0,0,0,0.65)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: draggingVideo ? 'grabbing' : 'grab',
+          zIndex: 4, touchAction: 'none',
+        }}
+      >
+        <GripHorizontal className="size-3" strokeWidth={3} style={{ color: '#FFF', opacity: 0.7 }} />
+      </div>
+      <button onClick={exitFloating} style={{
+        position: 'absolute', top: '24px', right: '8px', width: '26px', height: '26px',
+        border: '2px solid #FFF', borderRadius: '999px',
+        background: 'rgba(0,0,0,0.6)', color: '#FFF',
+        cursor: 'pointer', zIndex: 5,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}><Minimize2 className="size-3" strokeWidth={3} /></button>
+      <button onClick={enterImmersive} style={{
+        position: 'absolute', top: '24px', right: '40px', width: '26px', height: '26px',
+        border: '2px solid #FFF', borderRadius: '999px',
+        background: 'rgba(0,0,0,0.6)', color: '#FFF',
+        cursor: 'pointer', zIndex: 5,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}><Maximize2 className="size-3" strokeWidth={3} /></button>
+      <div
+        onPointerDown={startResize} onPointerMove={onResize}
+        onPointerUp={endResize} onPointerCancel={endResize}
+        style={{
+          position: 'absolute', bottom: 0, right: 0, width: '24px', height: '24px',
+          background: 'rgba(0,0,0,0.7)', cursor: 'nwse-resize',
+          zIndex: 5, touchAction: 'none',
+          borderTopLeftRadius: '12px',
+          display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end',
+        }}
+      >
+        <span style={{
+          width: '10px', height: '10px',
+          borderRight: '2px solid #FFF', borderBottom: '2px solid #FFF',
+          margin: '0 3px 3px 0', borderRadius: '0 0 4px 0',
+        }} />
+      </div>
+    </div>,
+    document.body
+  ) : null;
 
   return (
     <div className="fixed inset-0 bg-[#1a0b2e] font-mono flex flex-col overflow-hidden">
       {immersiveChrome}
+      {immersiveVideo}
+      {floatingVideo}
 
-      {/* VIDEO — always same tree position, only CSS changes */}
-      <div style={videoWrapStyle} onDoubleClick={handleVideoTap}>
-        {videoInner}
-      </div>
-
-      {/* NORMAL UI COLUMN — hidden in immersive */}
       {!immersive && (
         <div
           className="mx-auto flex w-full max-w-3xl flex-1 min-h-0 flex-col gap-2 overflow-y-auto"
           style={{
-            marginTop: '8px',
             paddingTop: 'max(8px, env(safe-area-inset-top))',
             paddingBottom: 'max(8px, env(safe-area-inset-bottom))',
             paddingLeft: 'max(8px, env(safe-area-inset-left))',
@@ -1105,6 +1049,51 @@ export default function WatchPage() {
               >←</Link>
             </div>
           </div>
+
+          {/* DOCKED VIDEO */}
+          {!floating && (
+            <div
+              style={{
+                position: 'relative',
+                width: '100%',
+                aspectRatio: '16 / 9',
+                maxHeight: 'min(56vh, 420px)',
+                borderRadius: '18px',
+                border: '4px solid black',
+                boxShadow: '6px 6px 0 0 black',
+                overflow: 'hidden',
+                background: '#000',
+                flexShrink: 0,
+              }}
+              onDoubleClick={handleVideoTap}
+            >
+              {videoInner}
+
+              {!showEmpty && (
+                <div style={{
+                  position: 'absolute', top: '10px', right: '10px',
+                  display: 'flex', gap: '6px', zIndex: 5,
+                }}>
+                  <button onClick={enterFloating} style={{
+                    padding: '6px 10px', border: '2px solid #FFF', borderRadius: '999px',
+                    background: 'rgba(0,0,0,0.55)', color: '#FFF',
+                    fontSize: '11px', fontWeight: 900, cursor: 'pointer',
+                    display: 'inline-flex', alignItems: 'center', gap: '4px',
+                  }}>
+                    <GripHorizontal className="size-3" strokeWidth={3} /> float
+                  </button>
+                  <button onClick={enterImmersive} style={{
+                    padding: '6px 10px', border: '2px solid #FFF', borderRadius: '999px',
+                    background: 'rgba(0,0,0,0.55)', color: '#FFF',
+                    fontSize: '11px', fontWeight: 900, cursor: 'pointer',
+                    display: 'inline-flex', alignItems: 'center', gap: '4px',
+                  }}>
+                    <Maximize2 className="size-3" strokeWidth={3} /> full
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           <VoiceChatBar
             micOn={voice.micOn}
