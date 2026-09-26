@@ -52,8 +52,9 @@ const GAMES: Game[] = [
     subtitle: 'who is fastest?',
     emoji: '⚡',
     color: '#E2F0D9',
-    status: 'soon',
-    players: 'up to 6',
+    href: '/arcade/reaction',
+    status: 'live',
+    players: 'everyone',
   },
   {
     id: 'connect4',

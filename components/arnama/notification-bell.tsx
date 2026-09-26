@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase';
 import { useProfile } from '@/lib/use-profile';
 import { playDing } from '@/lib/ding';
 import { useTabBadge } from '@/lib/use-tab-badge';
+
 type Notif = {
   id: string;
   kind: 'chat' | 'wish' | 'photo' | 'plan' | 'dm' | 'tune' | 'arcade';
@@ -111,7 +112,7 @@ export function NotificationBell() {
         profileData?.last_seen_notifications_at ?? '1970-01-01T00:00:00Z';
       setLastSeen(lastSeenAt);
 
-      const [msgs, wishes, photos, plans, dms, tunes, waitingGames] =
+      const [msgs, wishes, photos, plans, dms, tunes, waitingGames, storiesRes] =
         await Promise.all([
           supabase.from('messages').select('id, user_email, content, created_at').neq('user_email', myEmail).order('created_at', { ascending: false }).limit(8),
           supabase.from('wishes').select('id, user_email, content, created_at').neq('user_email', myEmail).order('created_at', { ascending: false }).limit(5),
@@ -120,6 +121,7 @@ export function NotificationBell() {
           supabase.from('vault_dms').select('id, sender_id, sender_email, content, created_at, read_at').eq('recipient_id', user.id).order('created_at', { ascending: false }).limit(5),
           supabase.from('tunes').select('id, user_email, title, created_at').neq('user_email', myEmail).order('created_at', { ascending: false }).limit(5),
           supabase.from('arcade_ttt').select('id, player_x_email, created_at').eq('status', 'waiting').neq('player_x_id', user.id).order('created_at', { ascending: false }).limit(3),
+          supabase.from('stories').select('id, user_email, created_at, visibility, visible_to_users').neq('user_email', myEmail).order('created_at', { ascending: false }).limit(5),
         ]);
 
       const notifs: Notif[] = [];
@@ -163,6 +165,26 @@ export function NotificationBell() {
       (waitingGames.data ?? []).forEach((g: any) => {
         const sender = g.player_x_email.split('@')[0];
         notifs.push({ id: `arcade-${g.id}`, kind: 'arcade', text: `${sender} is waiting for a tic-tac-toe match`, href: '/arcade/tictactoe', at: g.created_at, color: '#E6E6FA', emoji: '🎮' });
+      });
+      (storiesRes.data ?? []).forEach((s: any) => {
+        const sender = s.user_email.split('@')[0];
+        // Skip targeted stories not meant for me
+        if (
+          s.visibility === 'users' &&
+          Array.isArray(s.visible_to_users) &&
+          !s.visible_to_users.map((e: string) => e.toLowerCase()).includes(myEmail.toLowerCase())
+        ) {
+          return;
+        }
+        notifs.push({
+          id: `story-${s.id}`,
+          kind: 'photo',
+          text: `${sender} shared a new story`,
+          href: '/',
+          at: s.created_at,
+          color: '#FFD1DC',
+          emoji: '🎬',
+        });
       });
 
       notifs.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
@@ -270,6 +292,29 @@ export function NotificationBell() {
         tryPush({ id: `arcade-${g.id}`, kind: 'arcade', text: `${sender} is waiting for a tic-tac-toe match`, href: '/arcade/tictactoe', at: g.created_at, color: '#E6E6FA', emoji: '🎮' });
       });
 
+      ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'stories' }, (payload) => {
+        const s = payload.new as any;
+        if (s.user_email === myEmail) return;
+        // Skip targeted stories not meant for me
+        if (
+          s.visibility === 'users' &&
+          Array.isArray(s.visible_to_users) &&
+          !s.visible_to_users.map((e: string) => e.toLowerCase()).includes(myEmail.toLowerCase())
+        ) {
+          return;
+        }
+        const sender = s.user_email.split('@')[0];
+        tryPush({
+          id: `story-${s.id}`,
+          kind: 'photo',
+          text: `${sender} shared a new story`,
+          href: '/',
+          at: s.created_at,
+          color: '#FFD1DC',
+          emoji: '🎬',
+        });
+      });
+
       ch.subscribe();
       channels.push(ch);
     }
@@ -325,7 +370,6 @@ export function NotificationBell() {
     router.push(href);
   }
 
-  // GLASS: translucent pastel + blur
   const glassPanel: React.CSSProperties = {
     backgroundColor: 'rgba(255, 253, 245, 0.72)',
     backdropFilter: 'blur(18px) saturate(180%)',
@@ -397,7 +441,6 @@ export function NotificationBell() {
 
       {open && (
         <div style={panelStyle}>
-          {/* Header — glass tint */}
           <div
             className="flex items-center justify-between border-b-4 border-black shrink-0"
             style={{
