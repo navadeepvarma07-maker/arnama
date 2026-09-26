@@ -11,6 +11,7 @@ import {
   isDarkBg,
   MessageBg,
 } from '@/components/message-bg';
+import { MessageSearch } from '@/components/arnama/message-search';
 import { CutePet } from '@/components/arnama/cute-pet';
 import { SwipeCarousel } from '@/components/arnama/swipe-carousel';
 import { HiddenScroll } from '@/components/arnama/hidden-scroll';
@@ -139,6 +140,7 @@ export default function ChatPage() {
   const [groupSending, setGroupSending] = useState(false);
   const [groupNewBelow, setGroupNewBelow] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupEmoji, setNewGroupEmoji] = useState('💬');
@@ -1156,6 +1158,28 @@ export default function ChatPage() {
                 await supabase.from('profiles').update({ chat_bg: bg }).eq('id', user.id);
               }}
             />
+                        <button
+              onClick={() => setSearchOpen(true)}
+              aria-label="Search messages"
+              style={{
+                width: '36px',
+                height: '36px',
+                border: '2px solid black',
+                borderRadius: '999px',
+                background: '#FFF5BA',
+                color: '#000',
+                cursor: 'pointer',
+                flexShrink: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '15px',
+                boxShadow: '2px 2px 0 0 black',
+              }}
+            >
+              🔍
+            </button>
+
             {isGroup && (
               <button
                 onClick={() => setSettingsOpen(true)}
@@ -1724,6 +1748,16 @@ export default function ChatPage() {
             </form>
           </div>
         </div>
+        {searchOpen && userId && email && (
+          <MessageSearch
+            messages={isGroup ? groupMessages : messages}
+            myEmail={email}
+            timeFormat={timeFormat}
+            onJump={(id) => jumpToMessage(id as number, isGroup)}
+            onClose={() => setSearchOpen(false)}
+          />
+        )}
+
         {settingsOpen && activeRoom.type === 'group' && userId && email && (
           <GroupSettings
             group={activeRoom.group}

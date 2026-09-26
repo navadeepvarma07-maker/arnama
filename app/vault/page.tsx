@@ -3,6 +3,7 @@ import { CutePet } from '@/components/arnama/cute-pet';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { MessageSearch } from '@/components/arnama/message-search';
 import { useProfile, displayLabel, initialsFor } from '@/lib/use-profile';
 import { BgPickerButton, getBgStyle, isDarkBg, MessageBg } from '@/components/message-bg';
 import { SwipeCarousel } from '@/components/arnama/swipe-carousel';
@@ -123,7 +124,7 @@ function VaultContent() {
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [reactions, setReactions] = useState<ReactionsMap>({});
-
+  const [searchOpen, setSearchOpen] = useState(false);
   const dmBottomRef = useRef<HTMLDivElement>(null);
   const dmScrollRef = useRef<HTMLDivElement>(null);
   const dmAtBottomRef = useRef(true);
@@ -822,8 +823,8 @@ function VaultContent() {
             paddingRight: 'max(8px, env(safe-area-inset-right))',
           }}
         >
-          {/* Thread header */}
-          <div
+                    {/* Thread header */}
+                    <div
             className="border-4 border-black shrink-0"
             style={{
               borderRadius: '18px',
@@ -902,8 +903,28 @@ function VaultContent() {
               </p>
             </div>
             <BgPickerButton current={vaultBg} onChange={handleBgChange} />
+            <button
+              onClick={() => setSearchOpen(true)}
+              aria-label="Search messages"
+              style={{
+                width: '36px',
+                height: '36px',
+                border: '2px solid black',
+                borderRadius: '999px',
+                background: '#FFF5BA',
+                color: '#000',
+                cursor: 'pointer',
+                flexShrink: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '15px',
+                boxShadow: '2px 2px 0 0 black',
+              }}
+            >
+              🔍
+            </button>
           </div>
-
           {/* Messages window */}
           <div
             className="flex-1 min-h-0 flex flex-col border-4 border-black bg-white rounded-2xl overflow-hidden relative"
@@ -1407,6 +1428,15 @@ function VaultContent() {
             </form>
           </div>
         </div>
+        {searchOpen && email && (
+          <MessageSearch
+            messages={dms}
+            myEmail={email}
+            timeFormat={timeFormat}
+            onJump={(id) => jumpToMessage(String(id))}
+            onClose={() => setSearchOpen(false)}
+          />
+        )}
 
         {contextMenu && (
           <div
