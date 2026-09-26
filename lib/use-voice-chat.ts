@@ -13,7 +13,7 @@ type Participant = {
   connState: string;
   audioLevel: number;
   audioState: string;
-  trackState: string; // 'live' | 'muted' | 'ended' | 'no-track'
+  trackState: string;
 };
 
 const ICE_SERVERS: RTCIceServer[] = [
@@ -35,7 +35,12 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
   const [debug, setDebug] = useState<string>('booting…');
 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  // The stream we SEND to peers (always live, mute via gain)
   const localStreamRef = useRef<MediaStream | null>(null);
+  // The raw mic stream (for cleanup)
+  const rawMicRef = useRef<MediaStream | null>(null);
+  // Mute gain node — 0 = muted, 1 = live
+  const muteGainRef = useRef<GainNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
 
   const peersRef = useRef<
@@ -64,12 +69,15 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
     try {
       if (!audioCtxRef.current) {
         const Ctor = (window.AudioContext || (window as any).webkitAudioContext);
-        if (!Ctor) return;
+        if (!Ctor) return null;
         audioCtxRef.current = new Ctor();
       }
       const ctx = audioCtxRef.current;
       if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-    } catch {}
+      return ctx;
+    } catch {
+      return null;
+    }
   }, []);
 
   useEffect(() => {
@@ -77,9 +85,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       ensureAudioCtx();
       peersRef.current.forEach((p) => {
         if (p.audioEl && p.audioEl.paused) {
-          p.audioEl.play().then(() => {
-            log(`unlocked ${p.peerEmail.split('@')[0]}`);
-          }).catch(() => {});
+          p.audioEl.play().catch(() => {});
         }
       });
     }
@@ -91,7 +97,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       window.removeEventListener('keydown', unlock);
       window.removeEventListener('touchstart', unlock);
     };
-  }, [ensureAudioCtx, log]);
+  }, [ensureAudioCtx]);
 
   const closePeer = useCallback((peerId: string) => {
     const peer = peersRef.current.get(peerId);
@@ -120,7 +126,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
         bundlePolicy: 'max-bundle',
       });
 
-      // Always send our mic track (even if disabled — direction stays sendrecv)
+      // Add the LIVE track from our mute-gain stream (always enabled at the RTP level)
       localStreamRef.current.getTracks().forEach((track) => {
         try { pc.addTrack(track, localStreamRef.current!); } catch {}
       });
@@ -143,16 +149,11 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
         peer.remoteTrack = track;
         const stream = e.streams[0] || new MediaStream([track]);
 
-        log(
-          `✓ track from ${peerEmail.split('@')[0]} — kind=${track.kind} enabled=${track.enabled} muted=${track.muted}`
-        );
+        log(`✓ track from ${peerEmail.split('@')[0]} — enabled=${track.enabled} muted=${track.muted}`);
 
-        // If the track starts muted, listen for the unmute
-        track.addEventListener('unmute', () => log(`▶ ${peerEmail.split('@')[0]} mic live`));
-        track.addEventListener('mute', () => log(`✗ ${peerEmail.split('@')[0]} mic muted`));
-        track.addEventListener('ended', () => log(`✗ ${peerEmail.split('@')[0]} track ended`));
+        track.addEventListener('unmute', () => log(`▶ ${peerEmail.split('@')[0]} live`));
+        track.addEventListener('mute', () => log(`✗ ${peerEmail.split('@')[0]} muted`));
 
-        // <audio> element (default output device — same as WhatsApp)
         const audioEl = document.createElement('audio');
         audioEl.autoplay = true;
         audioEl.setAttribute('playsinline', 'true');
@@ -172,10 +173,8 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
           .then(() => log(`▶▶ playing ${peerEmail.split('@')[0]}`))
           .catch((err) => log(`autoplay blocked: ${err?.name}`));
 
-        // Analyser for VU meter only
         try {
-          ensureAudioCtx();
-          const ctx = audioCtxRef.current;
+          const ctx = ensureAudioCtx();
           if (ctx) {
             const source = ctx.createMediaStreamSource(stream);
             const analyser = ctx.createAnalyser();
@@ -227,7 +226,6 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
         if (st === 'failed') {
           if (peer.retries < MAX_RETRIES) {
             peer.retries++;
-            log(`retry ${peer.retries}/${MAX_RETRIES}`);
             setTimeout(() => {
               closePeer(peerId);
               setTimeout(() => createPeer(peerId, peerEmail, initiator), 800);
@@ -272,15 +270,33 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
 
     async function setup() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        // 1. Raw mic
+        const raw = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
           video: false,
         });
-        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
-        localStreamRef.current = stream;
-        stream.getAudioTracks().forEach((t) => (t.enabled = false));
+        if (cancelled) { raw.getTracks().forEach((t) => t.stop()); return; }
+        rawMicRef.current = raw;
+
+        // 2. Route mic → gain → destination stream.
+        //    The dest.stream track is ALWAYS live (never disabled).
+        //    Muting = set gain to 0. This is the fix.
+        const ctx = ensureAudioCtx();
+        if (!ctx) { setError('audio context failed'); return; }
+        if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+
+        const source = ctx.createMediaStreamSource(raw);
+        const gain = ctx.createGain();
+        gain.gain.value = 0; // start muted
+        const dest = ctx.createMediaStreamDestination();
+        source.connect(gain);
+        gain.connect(dest);
+
+        muteGainRef.current = gain;
+        localStreamRef.current = dest.stream;
+
         setConnected(true);
-        log('mic ready — muted until you tap 🎤');
+        log('mic ready — mute via gain');
       } catch (err: any) {
         const msg =
           err?.name === 'NotAllowedError' ? 'mic permission denied'
@@ -357,8 +373,11 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
 
     return () => {
       cancelled = true;
+      rawMicRef.current?.getTracks().forEach((t) => t.stop());
+      rawMicRef.current = null;
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
       localStreamRef.current = null;
+      muteGainRef.current = null;
       peersRef.current.forEach((p) => {
         try { p.pc.close(); } catch {}
         try { p.sourceNode?.disconnect(); } catch {}
@@ -372,18 +391,17 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
       channelRef.current = null;
       setConnected(false);
     };
-  }, [roomId, userId, email, createPeer, closePeer, log]);
+  }, [roomId, userId, email, createPeer, closePeer, log, ensureAudioCtx]);
 
-  // VU + track state poll
   useEffect(() => {
     const i = setInterval(() => {
       const updates: Record<string, { level: number; speaking: boolean; audioState: string; trackState: string }> = {};
 
-      if (localStreamRef.current && micOn) {
+      if (rawMicRef.current && micOn) {
         const ctx = audioCtxRef.current;
         if (ctx && !localAnalyserRef.current) {
           try {
-            const src = ctx.createMediaStreamSource(localStreamRef.current);
+            const src = ctx.createMediaStreamSource(rawMicRef.current);
             const an = ctx.createAnalyser();
             an.fftSize = 512;
             src.connect(an);
@@ -411,7 +429,6 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
           for (let i = 0; i < data.length; i++) sum += data[i];
           level = Math.min(100, (sum / data.length) * 2);
         }
-
         const el = peer.audioEl;
         let astate = 'no-el';
         if (el) {
@@ -419,15 +436,13 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
           else if (el.paused) astate = 'paused';
           else astate = 'playing';
         }
-
         const t = peer.remoteTrack;
         let tstate = 'no-track';
         if (t) {
           if (t.readyState === 'ended') tstate = 'ended';
-          else if (t.muted || !t.enabled) tstate = 'muted';
+          else if (t.muted) tstate = 'muted';
           else tstate = 'live';
         }
-
         updates[id] = { level, speaking: level > 15, audioState: astate, trackState: tstate };
       });
 
@@ -445,16 +460,18 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
   }, [micOn]);
 
   const toggleMic = useCallback(() => {
-    if (!localStreamRef.current) return;
-    ensureAudioCtx();
+    if (!muteGainRef.current) return;
+    const ctx = audioCtxRef.current;
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
     const next = !micOn;
-    localStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = next));
+    // The magic: just flip the gain node. The track stays live at RTP level.
+    muteGainRef.current.gain.value = next ? 1 : 0;
     setMicOn(next);
     peersRef.current.forEach((p) => {
       if (p.audioEl && p.audioEl.paused) p.audioEl.play().catch(() => {});
     });
     log(next ? 'mic ON' : 'mic OFF');
-  }, [micOn, log, ensureAudioCtx]);
+  }, [micOn, log]);
 
   const togglePeerMute = useCallback((peerId: string) => {
     const peer = peersRef.current.get(peerId);
@@ -488,8 +505,7 @@ export function useVoiceChat(roomId: string, userId: string | null, email: strin
   }, [userId, createPeer, log]);
 
   const playTestTone = useCallback(() => {
-    ensureAudioCtx();
-    const ctx = audioCtxRef.current;
+    const ctx = ensureAudioCtx();
     if (!ctx) return;
     try {
       const osc = ctx.createOscillator();
